@@ -1,3 +1,4 @@
-a = 20 + 30
-b = input_int() + 10 + 20
-print(a + b + 60)
+a = 2
+b = 1
+c = 2 + 1
+print(c)

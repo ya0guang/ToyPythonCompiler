@@ -5,13 +5,25 @@ import type_check_Pvar
 import interp_Pvar
 
 # test program here
-prog1 = """
-a = 20 + - 30
-b = input_int() + 10 + 20
-print(a + b + 60)
+# prog = """
+# a = 20 + - 30
+# b = input_int() + 10 + 20
+# print(a + b + 60)
+# """
+
+# prog = """
+# a = 2
+# b = 1
+# c = a + b
+# print(c)
+# """
+
+prog = """
+a = -1
+print(a)
 """
 
-p = parse(prog1)
+p = parse(prog)
 type_check_Pvar.TypeCheckPvar().type_check_P(p)
 print("======= type check passes")
 

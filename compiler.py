@@ -99,24 +99,28 @@ class Compiler:
             case Constant(c):
                 return Immediate(c)
             case Name(var):
-                return e
+                return Variable(var)
 
     def select_expr(self, e: expr) -> List[instr]:
         instrs = []
         match e:
             case Call(Name('input_int'), []):
-                instrs.append(Callq("read_int", 0))
-                instrs.append(Instr('movq', [Reg('rax'), Name("Unnamed_Pyc_Var")]))
+                instrs.append(Callq('read_int', 0))
+                instrs.append(Instr('movq', [Reg('rax'), Variable("Unnamed_Pyc_Var")]))
             case UnaryOp(USub(), atm):
-                instrs.append(Instr('negq', [Name("Unnamed_Pyc_Var")]))
+                instrs.append(Instr('movq', [self.select_arg(atm), Variable("Unnamed_Pyc_Var")]))
+                instrs.append(Instr('negq', [Variable("Unnamed_Pyc_Var")]))
             case BinOp(atm1, Add(), atm2):
                 # TODO: optimize when the oprand and destination is the same
                 # if isinstance(atm1, Name):
                 #     (atm1, atm2) = (atm2, atm1)
                 # if isinstance(atm2, Name):
                 #     instrs.append(Instr('addq', [select_arg, Name("Unbounded_Pyc_Var")]))
-                instrs.append(Instr('movq', [self.select_arg(atm1), Name("Unnamed_Pyc_Var")]))
-                instrs.append(Instr('addq', [self.select_arg(atm2), Name("Unnamed_Pyc_Var")]))
+                instrs.append(Instr('movq', [self.select_arg(atm1), Variable("Unnamed_Pyc_Var")]))
+                instrs.append(Instr('addq', [self.select_arg(atm2), Variable("Unnamed_Pyc_Var")]))
+            case _:
+                instrs.append(Instr('movq', [self.select_arg(e), Variable("Unnamed_Pyc_Var")]))
+
         
         return instrs
 
@@ -128,8 +132,10 @@ class Compiler:
             for i in instrs:
                 match i:
                     case Instr(oprtr, args):
-                        new_args = [Name(var) if a == Name("Unnamed_Pyc_Var") else a for a in args]
+                        new_args = [Variable(var) if a == Variable("Unnamed_Pyc_Var") else a for a in args]
                         new_instrs.append(Instr(oprtr, new_args))
+                    case wild:
+                        new_instrs.append(wild)
             
             return new_instrs
                             
@@ -137,7 +143,7 @@ class Compiler:
         match s:
             case Expr(Call(Name('print'), [atm])):
                 instrs.append(Instr('movq', [self.select_arg(atm), Reg('rdi')]))
-                instrs.append(Callq("print_int", 1))
+                instrs.append(Callq('print_int', 1))
             case Expr(exp):
                 instrs += self.select_expr(exp)
             case Assign([Name(var)], exp):
