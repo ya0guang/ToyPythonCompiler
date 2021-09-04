@@ -10,7 +10,7 @@ from interp_Pint import interp_P
 from utils import repr_Module
 from utils import input_int
 
-from pe import *
+from pe import pe_P_int
 from ast import *
 
 def test_program(p: str):
