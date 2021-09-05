@@ -163,22 +163,63 @@ class Compiler:
     ############################################################################
 
     def assign_homes_arg(self, a: arg, home: Dict[Variable, arg]) -> arg:
-        # YOUR CODE HERE
-        pass
+        
+        if a in home.keys():
+            return home[a]
+        else:
+            return a
 
     def assign_homes_instr(self, i: instr,
                            home: Dict[location, arg]) -> instr:
-        # YOUR CODE HERE
-        pass
+        match i:
+            case Instr(oprtr, args):
+                new_args = []
+                for a in args:
+                    new_args.append(self.assign_homes_arg(a, home))
+                return Instr(oprtr, new_args)
+            case other:
+                return other
 
     def assign_homes_instrs(self, ss: List[instr],
                             home: Dict[location, arg]) -> List[instr]:
-        # YOUR CODE HERE
-        pass
+        new_ins = []
+        for i in ss:
+            new_ins.append(self.assign_homes_instr(i, home))
+        
+        return new_ins
+        
 
     def assign_homes(self, p: X86Program) -> X86Program:
-        # YOUR CODE HERE
-        pass
+        
+        def extract_var(ins: instr) -> List[Variable]:
+            var_list = []
+            match ins:
+                case Instr(_, args):
+                    for a in args:
+                        if isinstance(a, Variable):
+                            var_list.append(a)
+            return var_list
+
+        var_set = set([])
+        if type(p.body) == dict:
+            pass
+        else: # list
+            for s in p.body:
+                var_set.update(extract_var(s))
+
+        home = {}
+        assigned_homes = 0
+        for v in var_set:
+            home[v] = Deref("rbp", - (assigned_homes + 1) * 8)
+            assigned_homes += 1
+        
+        # print(home)
+
+        if type(p.body) == dict:
+            pass
+        else: # list
+            return X86Program(self.assign_homes_instrs(p.body, home))
+            
 
     ############################################################################
     # Patch Instructions

@@ -11,17 +11,17 @@ import interp_Pvar
 # print(a + b + 60)
 # """
 
-# prog = """
-# a = 2
-# b = 1
-# c = a + b
-# print(c)
-# """
-
 prog = """
-a = -1
-print(a)
+a = 2
+b = 1
+c = a + b
+print(c)
 """
+
+# prog = """
+# a = -1
+# print(a)
+# """
 
 p = parse(prog)
 type_check_Pvar.TypeCheckPvar().type_check_P(p)
@@ -41,3 +41,7 @@ print(p_rcoed)
 print("======= selecting instructions")
 p_x64_var = compiler.select_instructions(p_rcoed)
 print(p_x64_var)
+
+print("======= assigning homes")
+p_x64_stack = compiler.assign_homes(p_x64_var)
+print(p_x64_stack)
