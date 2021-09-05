@@ -141,6 +141,7 @@ class Compiler:
                             
         instrs = []
         match s:
+            # TODO: may delete all instructions containing `Variable("Unnamed_Pyc_Var")``
             case Expr(Call(Name('print'), [atm])):
                 instrs.append(Instr('movq', [self.select_arg(atm), Reg('rdi')]))
                 instrs.append(Callq('print_int', 1))
@@ -226,16 +227,29 @@ class Compiler:
     ############################################################################
 
     def patch_instr(self, i: instr) -> List[instr]:
-        # YOUR CODE HERE
-        pass
+        patched_instrs = []
+        match i:
+            case Instr("movq", [op1, Deref(reg, offset)]):
+                patched_instrs.append(Instr("movq", [op1, Reg("rax")]))
+                patched_instrs.append(Instr("movq", [Reg("rax"), Deref(reg, offset)]))
+            case _:
+                patched_instrs.append(i)
+        
+        return patched_instrs
 
     def patch_instrs(self, ss: List[instr]) -> List[instr]:
-        # YOUR CODE HERE
-        pass
+        new_instrs = []
+        for i in ss:
+            new_instrs += self.patch_instr(i)
+        
+        return new_instrs
 
     def patch_instructions(self, p: X86Program) -> X86Program:
-        # YOUR CODE HERE
-        pass
+
+        if type(p.body) == dict:
+            pass
+        else: # list
+            return X86Program(self.patch_instrs(p.body))
 
     ############################################################################
     # Prelude & Conclusion

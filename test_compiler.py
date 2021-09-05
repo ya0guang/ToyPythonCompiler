@@ -45,3 +45,7 @@ print(p_x64_var)
 print("======= assigning homes")
 p_x64_stack = compiler.assign_homes(p_x64_var)
 print(p_x64_stack)
+
+print("======= patching instructions")
+p_x64_int = compiler.patch_instructions(p_x64_stack)
+print(p_x64_int)
