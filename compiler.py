@@ -12,6 +12,8 @@ Temporaries = List[Binding]
 
 class Compiler:
     temp_count: int = 0
+    # used for tracking static stack usage
+    stack_count: int = 0
     ############################################################################
     # Remove Complex Operands
     ############################################################################
@@ -207,6 +209,7 @@ class Compiler:
         else: # list
             for s in p.body:
                 var_set.update(extract_var(s))
+        self.stack_count = len(var_set)
 
         home = {}
         assigned_homes = 0
@@ -229,9 +232,14 @@ class Compiler:
     def patch_instr(self, i: instr) -> List[instr]:
         patched_instrs = []
         match i:
-            case Instr("movq", [op1, Deref(reg, offset)]):
-                patched_instrs.append(Instr("movq", [op1, Reg("rax")]))
-                patched_instrs.append(Instr("movq", [Reg("rax"), Deref(reg, offset)]))
+            case Instr("movq", [Deref(reg1, offset1), Deref(reg2, offset2)]):
+                # MOV: Two memory locations in args
+                patched_instrs.append(Instr("movq", [Deref(reg1, offset1), Reg("rax")]))
+                patched_instrs.append(Instr("movq", [Reg("rax"), Deref(reg2, offset2)]))
+            case Instr("addq", [Deref(reg1, offset1), Deref(reg2, offset2)]):
+                # ADD: Two memory locations in args
+                patched_instrs.append(Instr("movq", [Deref(reg1, offset1), Reg("rax")]))
+                patched_instrs.append(Instr("addq", [Reg("rax"), Deref(reg2, offset2)]))
             case _:
                 patched_instrs.append(i)
         
@@ -256,5 +264,20 @@ class Compiler:
     ############################################################################
 
     def prelude_and_conclusion(self, p: X86Program) -> X86Program:
-        # YOUR CODE HERE
-        pass
+        stack_frame_size = ((self.stack_count + 1) // 2) * 16
+
+        prelude = []
+        prelude.append(Instr('pushq', [Reg('rbp')]))
+        prelude.append(Instr('movq', [Reg('rsp'), Reg('rbp')]))
+        prelude.append(Instr('subq', [Immediate(stack_frame_size), Reg('rsp')]))
+
+
+        conclusion = []
+        conclusion.append(Instr('addq', [Immediate(stack_frame_size), Reg('rsp')]))
+        conclusion.append(Instr('popq', [Reg('rbp')]))
+        conclusion.append(Instr('retq', []))
+            
+        if type(p.body) == dict:
+            pass
+        else: # list
+            return X86Program(prelude + p.body + conclusion)
