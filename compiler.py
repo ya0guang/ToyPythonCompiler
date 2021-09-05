@@ -240,6 +240,13 @@ class Compiler:
                 # ADD: Two memory locations in args
                 patched_instrs.append(Instr("movq", [Deref(reg1, offset1), Reg("rax")]))
                 patched_instrs.append(Instr("addq", [Reg("rax"), Deref(reg2, offset2)]))
+            case Instr("movq", [Immediate(v), dest]):
+                if v > 2147483647 or v < -2147483648: # not fit into 32-bit
+                    # TODO: may need to check for `dest` for optimization
+                    patched_instrs.append(Instr("movq", [Immediate(v), Reg("rax")]))
+                    patched_instrs.append(Instr("movq", [Reg("rax"), dest]))
+                else: 
+                    patched_instrs.append(i)
             case _:
                 patched_instrs.append(i)
         
