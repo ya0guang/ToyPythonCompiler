@@ -39,6 +39,6 @@ print((input_int() + 22) + (-10 + 22))
 
 test_program(prog1)
 
-test_program(prog2)
+# test_program(prog2)
 
-test_program(prog3)
+# test_program(prog3)
