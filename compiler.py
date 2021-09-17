@@ -9,11 +9,21 @@ from typing import List, Tuple, Set, Dict
 Binding = Tuple[Name, expr]
 Temporaries = List[Binding]
 
+arg_passing  = ['rdi', 'rsi', 'rdx', 'rcx', 'r8', 'r9',]
+caller_saved = arg_passing + ['rax', 'r10', 'r11']
+callee_saved = ['rsp', 'rbp', 'rbx', 'r12', 'r13', 'r14', 'r15']
+
 
 class Compiler:
+    
     temp_count: int = 0
     # used for tracking static stack usage
     stack_count: int = 0
+
+    arg_passing  = [Reg(x) for x in arg_passing]
+    caller_saved = [Reg(x) for x in caller_saved]
+    callee_saved = [Reg(x) for x in callee_saved]
+
     ############################################################################
     # Remove Complex Operands
     ############################################################################
@@ -160,6 +170,64 @@ class Compiler:
             case Module(stmts):
                 insts = [inst for s in stmts for inst in self.select_stmt(s)]
                 return X86Program(insts)
+
+    ############################################################################
+    # Register Allocation
+    ############################################################################
+
+    
+    def uncover_live(self, p: X86Program, need_list = False) -> List[Set]:
+
+        def extract_locations(args: List[arg]) -> set:
+            """extract all the locations from a list of args"""
+
+            extracted = set()
+            for a in args:
+                if isinstance(a, location):
+                    extracted.add(a)
+            
+            return extracted
+
+        def read_write_sets(s: instr) -> Tuple[set]:
+            """take an instrunction, return sets of its read and write locations"""
+
+            match s:
+                case Instr("movq", [src, dest]):
+                    return (extract_locations([src]), extract_locations([dest]))
+                case Instr("addq", [arg1, arg2]):
+                    return (extract_locations([arg1, arg2]), extract_locations([arg2]))
+                case Instr("negq", [arg]):
+                    return (extract_locations([arg]), extract_locations([arg]))
+                case Callq(_func_name, num_args):
+                    return (extract_locations([Compiler.arg_passing[:num_args]]), extract_locations(Compiler.caller_saved))
+                case _:
+                    raise Exception('error in read_write_sets, unhandled' + repr(s))
+                
+
+        def previous_las(s: instr, next_las: set) -> set:
+            """calculate the live after set of the previous instruction"""
+
+            (read_set, write_set) = read_write_sets(s)
+            
+            return next_las.difference(write_set).union(read_set)
+
+        live_after_dict = {}
+        live_after_sets = []
+        last_set = set()
+
+        if type(p.body) == dict:
+            pass
+        else: # list
+            for s in reversed(p.body):
+                live_after_dict[s] = last_set
+                live_after_sets.insert(0, previous_las(s, last_set))
+                last_set = live_after_sets[0]
+            live_after_sets.append(set())
+
+        if need_list:
+            return live_after_sets[1 :]
+        else:
+            return live_after_dict
 
     ############################################################################
     # Assign Homes

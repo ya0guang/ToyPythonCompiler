@@ -25,27 +25,32 @@ print(c)
 
 p = parse(prog)
 type_check_Pvar.TypeCheckPvar().type_check_P(p)
-print("======= type check passes")
+print("\n======= type check passes")
 
-print("======= interpreting original program")
+print("\n======= interpreting original program")
 interp = interp_Pvar.InterpPvar()
 interp.interp_P(p)
 
-print("======= interpreting RCOed program")
+print("\n======= interpreting RCOed program")
 compiler = Compiler()
 p_rcoed = compiler.remove_complex_operands(p)
 interp.interp_P(p_rcoed)
-print("======= printing RCOed program")
+print("\n======= printing RCOed program")
 print(p_rcoed)
 
-print("======= selecting instructions")
+print("\n======= selecting instructions")
 p_x64_var = compiler.select_instructions(p_rcoed)
 print(p_x64_var)
 
-print("======= assigning homes")
+print("\n======= uncovering live after sets")
+las = compiler.uncover_live(p_x64_var)
+for s in p_x64_var.body:
+    print(repr(s) + '\t' + str(las[s]))
+
+print("\n======= assigning homes")
 p_x64_stack = compiler.assign_homes(p_x64_var)
 print(p_x64_stack)
 
-print("======= patching instructions")
+print("\n======= patching instructions")
 p_x64_int = compiler.patch_instructions(p_x64_stack)
 print(p_x64_int)
