@@ -2,6 +2,7 @@ import ast
 from ast import *
 from utils import *
 from x86_ast import *
+from graph import *
 import os
 from typing import List, Tuple, Set, Dict
 
@@ -20,7 +21,9 @@ class Compiler:
     # used for tracking static stack usage
     stack_count: int = 0
 
+    # `calllq`: include first `arg_num` registers in its read-set R
     arg_passing  = [Reg(x) for x in arg_passing]
+    # `callq`: include all caller_saved registers in write-set W
     caller_saved = [Reg(x) for x in caller_saved]
     callee_saved = [Reg(x) for x in callee_saved]
 
@@ -172,9 +175,8 @@ class Compiler:
                 return X86Program(insts)
 
     ############################################################################
-    # Register Allocation
+    # Liveness after set generation
     ############################################################################
-
     
     def uncover_live(self, p: X86Program, need_list = False) -> List[Set]:
 
@@ -199,7 +201,10 @@ class Compiler:
                 case Instr("negq", [arg]):
                     return (extract_locations([arg]), extract_locations([arg]))
                 case Callq(_func_name, num_args):
-                    return (extract_locations([Compiler.arg_passing[:num_args]]), extract_locations(Compiler.caller_saved))
+                    # print("DEBUG: in callq case, num_args: ", num_args)
+                    return (extract_locations(Compiler.arg_passing[:num_args]), extract_locations(Compiler.caller_saved))
+                    # print("DEBUG" + str(tmp))
+                    # return tmp
                 case _:
                     raise Exception('error in read_write_sets, unhandled' + repr(s))
                 
@@ -228,6 +233,38 @@ class Compiler:
             return live_after_sets[1 :]
         else:
             return live_after_dict
+    ############################################################################
+    # inference graph building
+    ############################################################################
+
+    def build_interference(self, ins_list:list[instr], las_list: list[set]) -> UndirectedAdjList:
+        inf_graph = UndirectedAdjList()
+
+        for i in range(len(ins_list)):
+            ins = ins_list[i] # instruction
+            las = las_list[i] # live-after set
+            match ins:
+                case Instr("movq", [src, dest]):
+                    for loc in las:
+                        if not (loc == src or loc == dest):
+                            inf_graph.add_edge(loc, dest)
+                case Instr("addq", [_, arg]):
+                    for loc in las:
+                        if not loc == arg:
+                            inf_graph.add_edge(loc, arg)
+                case Instr("negq", [arg]):
+                    for loc in las:
+                        if not loc == arg:
+                            inf_graph.add_edge(loc, arg)
+                case Callq(_func_name, num_args):
+                    for loc in las:
+                        for dest in Compiler.caller_saved:
+                            if not dest == loc:
+                                inf_graph.add_edge(loc, dest)
+                case _:
+                    raise Exception('error in build_interference, unhandled' + repr(ins))
+            
+        return inf_graph
 
     ############################################################################
     # Assign Homes

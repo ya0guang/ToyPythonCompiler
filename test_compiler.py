@@ -12,11 +12,21 @@ import interp_Pvar
 # """
 
 prog = """
-a = 2
-b = 1
-c = a + b
-print(c)
+v = 1
+w = 42
+x = v + 7
+y = x
+z = x + w
+print(z + -y )
 """
+
+# prog = """
+# a = 5
+# b = 30
+# c = a
+# b = 10
+# c = c + b
+# """
 
 # prog = """
 # a = -1
@@ -46,6 +56,11 @@ print("\n======= uncovering live after sets")
 las = compiler.uncover_live(p_x64_var)
 for s in p_x64_var.body:
     print(repr(s) + '\t' + str(las[s]))
+
+print("\n======= building inference graph")
+las_list = compiler.uncover_live(p_x64_var, True)
+inf_graph = compiler.build_interference(p_x64_var.body, las_list)
+print(inf_graph.show())
 
 print("\n======= assigning homes")
 p_x64_stack = compiler.assign_homes(p_x64_var)
