@@ -62,6 +62,10 @@ las_list = compiler.uncover_live(p_x64_var, True)
 inf_graph = compiler.build_interference(p_x64_var.body, las_list)
 print(inf_graph.show())
 
+print("\n======= graph coloring")
+coloring = compiler.color_graph(inf_graph)
+print(coloring)
+
 print("\n======= assigning homes")
 p_x64_stack = compiler.assign_homes(p_x64_var)
 print(p_x64_stack)

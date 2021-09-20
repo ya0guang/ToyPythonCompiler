@@ -3,6 +3,7 @@ from ast import *
 from utils import *
 from x86_ast import *
 from graph import *
+from priority_queue import *
 import os
 from typing import List, Tuple, Set, Dict
 
@@ -265,6 +266,41 @@ class Compiler:
                     raise Exception('error in build_interference, unhandled' + repr(ins))
             
         return inf_graph
+
+    ############################################################################
+    # graph coloring
+    ############################################################################
+
+    def color_graph(self, graph: UndirectedAdjList) -> Dict[location, int]:
+
+        # TODO: move biasing
+        
+        saturation_dict = {}
+        assign_dict = {}
+
+        def less(x: location, y: location):
+            return len(saturation_dict[x.key]) < len(saturation_dict[y.key])
+
+        for v in graph.vertices():
+            saturation_dict[v] = set()
+        
+        pq = PriorityQueue(less)
+        for k, v in saturation_dict.items():
+            pq.push(k)
+        
+        for i in range(len(saturation_dict)):
+            v = pq.pop()
+            v_saturation = saturation_dict[v]
+            for i in range(1000):
+                if i not in v_saturation:
+                    assign_dict[v] = i
+                    break
+            
+            for adjacent in graph.adjacent(v):
+                saturation_dict[adjacent].add(assign_dict[v])
+        
+        # print("DEBUG: saturation_dict:\n", saturation_dict)
+        return assign_dict
 
     ############################################################################
     # Assign Homes
