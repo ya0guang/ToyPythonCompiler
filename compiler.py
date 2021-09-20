@@ -288,13 +288,17 @@ class Compiler:
         for k, v in saturation_dict.items():
             pq.push(k)
         
-        for i in range(len(saturation_dict)):
+        for _ in range(len(saturation_dict)):
             v = pq.pop()
             v_saturation = saturation_dict[v]
-            for i in range(1000):
-                if i not in v_saturation:
-                    assign_dict[v] = i
-                    break
+            colored = False
+            color = 0
+            while not colored:
+                if color not in v_saturation:
+                    assign_dict[v] = color
+                    colored = True
+                else:
+                    color += 1
             
             for adjacent in graph.adjacent(v):
                 saturation_dict[adjacent].add(assign_dict[v])
