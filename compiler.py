@@ -11,10 +11,18 @@ from typing import List, Tuple, Set, Dict
 Binding = Tuple[Name, expr]
 Temporaries = List[Binding]
 
+# Global register categorization
+
+# Register used for argument passing
 arg_passing  = ['rdi', 'rsi', 'rdx', 'rcx', 'r8', 'r9',]
 caller_saved = arg_passing + ['rax', 'r10', 'r11']
 callee_saved = ['rsp', 'rbp', 'rbx', 'r12', 'r13', 'r14', 'r15']
 
+# Allocatable registers = all - rsp - rbp - rax
+allocatable = callee_saved + caller_saved
+allocatable.remove('rsp')
+allocatable.remove('rbp')
+allocatable.remove('rax')
 
 class Compiler:
     
@@ -26,7 +34,20 @@ class Compiler:
     arg_passing  = [Reg(x) for x in arg_passing]
     # `callq`: include all caller_saved registers in write-set W
     caller_saved = [Reg(x) for x in caller_saved]
+
     callee_saved = [Reg(x) for x in callee_saved]
+
+    def __init__(self):
+        # this list can be changed for testing spilling
+        self.allocatable = [Reg(x) for x in allocatable]
+        all_reg = [Reg('rsp'), Reg('rbp'), Reg('rax')] + self.allocatable
+        self.int_graph = UndirectedAdjList()
+
+        self.color_reg_map = {}
+        color_from = -2
+        for reg in all_reg:
+            self.color_reg_map[color_from] = reg
+            color_from += 1
 
     ############################################################################
     # Remove Complex Operands
@@ -130,7 +151,7 @@ class Compiler:
                 # TODO: optimize when the oprand and destination is the same
                 # if isinstance(atm1, Name):
                 #     (atm1, atm2) = (atm2, atm1)
-                # if isinstance(atm2, Name):
+                # if isinstance(atm2, Name):    
                 #     instrs.append(Instr('addq', [select_arg, Name("Unbounded_Pyc_Var")]))
                 instrs.append(Instr('movq', [self.select_arg(atm1), Variable("Unnamed_Pyc_Var")]))
                 instrs.append(Instr('addq', [self.select_arg(atm2), Variable("Unnamed_Pyc_Var")]))
@@ -188,6 +209,7 @@ class Compiler:
             for a in args:
                 if isinstance(a, location):
                     extracted.add(a)
+                    self.int_graph.add_vertex(a)
             
             return extracted
 
@@ -234,12 +256,13 @@ class Compiler:
             return live_after_sets[1 :]
         else:
             return live_after_dict
+
     ############################################################################
     # inference graph building
     ############################################################################
 
-    def build_interference(self, ins_list:list[instr], las_list: list[set]) -> UndirectedAdjList:
-        inf_graph = UndirectedAdjList()
+    def build_interference(self, ins_list:list[instr], las_list: list[set]) -> bool:
+        """store the interference graph in member, `self.int_graph`"""
 
         for i in range(len(ins_list)):
             ins = ins_list[i] # instruction
@@ -247,25 +270,26 @@ class Compiler:
             match ins:
                 case Instr("movq", [src, dest]):
                     for loc in las:
+                        self.int_graph.add_vertex(loc)
                         if not (loc == src or loc == dest):
-                            inf_graph.add_edge(loc, dest)
+                            self.int_graph.add_edge(loc, dest)
                 case Instr("addq", [_, arg]):
                     for loc in las:
                         if not loc == arg:
-                            inf_graph.add_edge(loc, arg)
+                            self.int_graph.add_edge(loc, arg)
                 case Instr("negq", [arg]):
                     for loc in las:
                         if not loc == arg:
-                            inf_graph.add_edge(loc, arg)
-                case Callq(_func_name, num_args):
+                            self.int_graph.add_edge(loc, arg)
+                case Callq(_func_name, _num_args):
                     for loc in las:
                         for dest in Compiler.caller_saved:
                             if not dest == loc:
-                                inf_graph.add_edge(loc, dest)
+                                self.int_graph.add_edge(loc, dest)
                 case _:
                     raise Exception('error in build_interference, unhandled' + repr(ins))
             
-        return inf_graph
+        return True
 
     ############################################################################
     # graph coloring
@@ -281,8 +305,23 @@ class Compiler:
         def less(x: location, y: location):
             return len(saturation_dict[x.key]) < len(saturation_dict[y.key])
 
+        # initialize saturation_dict
         for v in graph.vertices():
             saturation_dict[v] = set()
+        
+        # check if the vertices are already a register
+        for v in graph.vertices():
+            if isinstance(v, Reg):
+                # find key for the register in `allocation` dict
+                for index, reg in self.color_reg_map.items():
+                    if reg == v:
+                        assign_dict[v] = index
+                        break
+                # color the adjacent of allocated registers first
+                # there should be no confliction!
+                for adjacent in graph.adjacent(v):
+                    saturation_dict[adjacent].add(assign_dict[v])
+
         
         pq = PriorityQueue(less)
         for k, v in saturation_dict.items():
@@ -290,6 +329,9 @@ class Compiler:
         
         for _ in range(len(saturation_dict)):
             v = pq.pop()
+            # skip register vertices, since they've been assigned a home
+            if isinstance(v, Reg):
+                continue
             v_saturation = saturation_dict[v]
             colored = False
             color = 0
@@ -334,35 +376,28 @@ class Compiler:
         for i in ss:
             new_ins.append(self.assign_homes_instr(i, home))
         
-        return new_ins
+        return new_ins        
+
+    def map_colors(self, coloring: Dict[location, int]) ->  Dict[location, arg]:
+        """return a dict mapping colors to registers or stack locations"""
+        allocatable_reg_num = len(self.allocatable)
+        result = {}
+        for vertex, color in coloring.items():
+            if color < allocatable_reg_num:
+                result[vertex] = self.color_reg_map[color]
+            else:
+                result[vertex] = Deref("rbp", - (color - allocatable_reg_num + 1) * 8)
+                self.stack_count += 1
         
+        return result
 
     def assign_homes(self, p: X86Program) -> X86Program:
-        
-        def extract_var(ins: instr) -> List[Variable]:
-            var_list = []
-            match ins:
-                case Instr(_, args):
-                    for a in args:
-                        if isinstance(a, Variable):
-                            var_list.append(a)
-            return var_list
 
-        var_set = set([])
-        if type(p.body) == dict:
-            pass
-        else: # list
-            for s in p.body:
-                var_set.update(extract_var(s))
-        self.stack_count = len(var_set)
-
-        home = {}
-        assigned_homes = 0
-        for v in var_set:
-            home[v] = Deref("rbp", - (assigned_homes + 1) * 8)
-            assigned_homes += 1
-        
-        # print(home)
+        # assuming p.body is a list
+        las_list = self.uncover_live(p, True)
+        self.build_interference(p.body, las_list)
+        coloring = self.color_graph(self.int_graph)
+        home = self.map_colors(coloring)
 
         if type(p.body) == dict:
             pass
@@ -392,6 +427,10 @@ class Compiler:
                     patched_instrs.append(Instr("movq", [Reg("rax"), dest]))
                 else: 
                     patched_instrs.append(i)
+            case Instr("movq", [Reg(reg1), Reg(reg2)]) if reg1 == reg2:
+                # MOV: Trivial move (move to same place after allocating registers)
+                # THROW AWAY (don't let it be added in in last case)
+                pass
             case _:
                 patched_instrs.append(i)
         

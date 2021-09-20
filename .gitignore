@@ -5,3 +5,6 @@ __pycache__
 *.s
 *.out
 *.o
+
+# test output dir
+test/output
