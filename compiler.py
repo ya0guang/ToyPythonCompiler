@@ -232,10 +232,7 @@ class Compiler:
                 case Instr("negq", [arg]):
                     return (extract_locations([arg]), extract_locations([arg]))
                 case Callq(_func_name, num_args):
-                    # print("DEBUG: in callq case, num_args: ", num_args)
                     return (extract_locations(Compiler.arg_passing[:num_args]), extract_locations(Compiler.caller_saved))
-                    # print("DEBUG" + str(tmp))
-                    # return tmp
                 case _:
                     raise Exception(
                         'error in read_write_sets, unhandled' + repr(s))
@@ -432,10 +429,17 @@ class Compiler:
         self.build_move_graph(p.body)
         coloring = self.color_graph(self.int_graph)
 
-        for r in Compiler.callee_saved:
-            if self.color_reg_map[r] in coloring.values():
+        # figure out which registers need saving
+        for r in Compiler.callee_saved[2:]:
+            # find the color of register
+            color = None
+            for index, reg in self.color_reg_map.items():
+                if reg == r:
+                    color = index
+            # this color(reg) is used
+            if color in coloring.values():
                 self.used_callee.add(r)
-
+        
         home = self.map_colors(coloring)
 
         if type(p.body) == dict:
@@ -500,10 +504,12 @@ class Compiler:
     def prelude_and_conclusion(self, p: X86Program) -> X86Program:
         stack_frame_size = ((self.stack_count + 1) // 2) * 16
 
+        self.used_callee = list(self.used_callee)
+
         prelude = []
         prelude.append(Instr('pushq', [Reg('rbp')]))
         prelude.append(Instr('movq', [Reg('rsp'), Reg('rbp')]))
-        for r in self.callee_saved:
+        for r in self.used_callee:
             prelude.append(Instr('pushq', [r]))
         prelude.append(
             Instr('subq', [Immediate(stack_frame_size), Reg('rsp')]))
@@ -511,7 +517,7 @@ class Compiler:
         conclusion = []
         conclusion.append(
             Instr('addq', [Immediate(stack_frame_size), Reg('rsp')]))
-        for r in self.callee_saved:
+        for r in reversed(self.used_callee):
             prelude.append(Instr('popq', [r]))
         conclusion.append(Instr('popq', [Reg('rbp')]))
         conclusion.append(Instr('retq', []))
