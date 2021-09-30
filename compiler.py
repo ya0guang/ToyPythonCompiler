@@ -39,6 +39,9 @@ class Compiler:
     callee_saved = [Reg(x) for x in callee_saved]
 
     def __init__(self):
+        self.read_set_dict = {}
+        self.write_set_dict = {}
+        self.live_after_set_dict = {}
         # this list can be changed for testing spilling
         self.allocatable = [Reg(x) for x in allocatable]
         all_reg = [Reg('rsp'), Reg('rbp'), Reg('rax')] + self.allocatable
@@ -74,6 +77,7 @@ class Compiler:
             return (e, temps)
 
         match e:
+            # recursively call rco_exp on each op
             case UnaryOp(USub(), exp):
                 if is_atm(exp):
                     tail = e
@@ -143,6 +147,7 @@ class Compiler:
                 return Variable(var)
 
     def select_expr(self, e: expr) -> List[instr]:
+        # pretending the variable will always be assigned
         instrs = []
         match e:
             case Call(Name('input_int'), []):
@@ -221,46 +226,47 @@ class Compiler:
 
             return extracted
 
-        def read_write_sets(s: instr) -> Tuple[set]:
+        def read_write_sets(s: instr):
             """take an instrunction, return sets of its read and write locations"""
+
+            read_set = set()
+            write_set = set()
 
             match s:
                 case Instr("movq", [src, dest]):
-                    return (extract_locations([src]), extract_locations([dest]))
+                    (read_set, write_set) = (extract_locations([src]), extract_locations([dest]))
                 case Instr("addq", [arg1, arg2]):
-                    return (extract_locations([arg1, arg2]), extract_locations([arg2]))
+                    (read_set, write_set) = (extract_locations([arg1, arg2]), extract_locations([arg2]))
                 case Instr("negq", [arg]):
-                    return (extract_locations([arg]), extract_locations([arg]))
+                    (read_set, write_set) = (extract_locations([arg]), extract_locations([arg]))
                 case Callq(_func_name, num_args):
-                    return (extract_locations(Compiler.arg_passing[:num_args]), extract_locations(Compiler.caller_saved))
+                    (read_set, write_set) = (extract_locations(Compiler.arg_passing[:num_args]), extract_locations(Compiler.caller_saved))
                 case _:
                     raise Exception(
                         'error in read_write_sets, unhandled' + repr(s))
 
-        def previous_las(s: instr, next_las: set) -> set:
-            """calculate the live after set of the previous instruction"""
-
-            (read_set, write_set) = read_write_sets(s)
-
-            return next_las.difference(write_set).union(read_set)
-
-        live_after_dict = {}
-        live_after_sets = []
+            self.read_set_dict[s] = read_set
+            self.write_set_dict[s] = write_set
+        
         last_set = set()
 
+        # generate the read & write set for each instruction
         if type(p.body) == dict:
             pass
         else:  # list
             for s in reversed(p.body):
-                live_after_dict[s] = last_set
-                live_after_sets.insert(0, previous_las(s, last_set))
-                last_set = live_after_sets[0]
-            live_after_sets.append(set())
+                read_write_sets(s)
+                self.live_after_set_dict[s] = last_set.difference(self.write_set_dict[s]).union(self.read_set_dict[s])
+                last_set = self.live_after_set_dict[s]
 
+        # output
         if need_list:
-            return live_after_sets[1:]
+            live_after_sets_list = []
+            for s in p.body:
+                live_after_sets_list.append(self.live_after_set_dict[s])
+            return live_after_sets_list
         else:
-            return live_after_dict
+            return self.live_after_set_dict
 
     ############################################################################
     # inference and move graph building
@@ -373,6 +379,7 @@ class Compiler:
 
             for adjacent in graph.adjacent(v):
                 saturation_dict[adjacent].add(assign_dict[v])
+                pq.increase_key(adjacent)
 
         # print("DEBUG: saturation_dict:\n", saturation_dict)
         return assign_dict
