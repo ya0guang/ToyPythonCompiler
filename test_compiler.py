@@ -1,8 +1,25 @@
 from ast import *
 from compiler import *
 from utils import repr_Module
-import type_check_Pvar
-import interp_Pvar
+import type_check_Pif
+import interp_Pif
+
+prog = """
+x = 1
+y = 1
+if False or x!= y and x == y or True:
+  u = x < y
+  v = x <= y
+  w = x > y
+  z = x >= y
+else:
+  u = True
+  v = True
+  w = True
+  z = True
+
+print((x +- y if not u and v else 0))
+"""
 
 # test program here
 # prog = """
@@ -11,14 +28,14 @@ import interp_Pvar
 # print(a + b + 60)
 # """
 
-prog = """
-v = 1
-w = 42
-x = v + 7
-y = x
-z = x + w
-print(z + -y )
-"""
+# prog = """
+# v = 1
+# w = 42
+# x = v + 7
+# y = x
+# z = x + w
+# print(z + -y )
+# """
 
 # prog = """
 # x = input_int()
@@ -55,11 +72,15 @@ print(z + -y )
 # """
 
 p = parse(prog)
-type_check_Pvar.TypeCheckPvar().type_check_P(p)
+
+print("\n======= AST of the original program")
+print(p)
+
+type_check_Pif.TypeCheckPif().type_check_P(p)
 print("\n======= type check passes")
 
 print("\n======= interpreting original program")
-interp = interp_Pvar.InterpPvar()
+interp = interp_Pif.InterpPif()
 interp.interp_P(p)
 
 print("\n======= interpreting RCOed program")

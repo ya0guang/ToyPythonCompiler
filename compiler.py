@@ -59,46 +59,113 @@ class Compiler:
     # Remove Complex Operands
     ############################################################################
 
-    def rco_exp(self, e: expr, need_atomic: bool) -> Tuple[expr, Temporaries]:
+    # def shrink_stmt(self, s: stmt) -> stmt:
+    #     """    
+    #     # e1 and e2 ⇒ e2 if e1 else False
+    #     # e1 or e2 ⇒ True if e1 else e2
+    #     # IfExp(test, body, orelse)
+    #     """
+    #     match s:
+    #         case Expr(BoolOp(And(), [e1, e2])):
+    #             return Expr(IfExp(e1, e2, False))
+    #         case Expr(BoolOp(Or(), [e1, e2])):
+    #             return Expr(IfExp(e1, True, e2))
+    #         case somethingElse:
+    #             return somethingElse
+    # def shrink(self, p: Module) -> Module:
+    #     """Removing 'and' & 'or' by translating them into if-statements"""
+    #     match p:
+    #         case Module(stmts):
+    #             new_stmts = [self.shrink_stmt(s) for s in stmts]
+    #             return Module(new_stmts)
 
-        def is_atm(e: expr):
-            """helper function to check if `e` is an `atm` """
-            match e:
-                case Constant(_):
-                    return True
-                case Name(_):
-                    return True
-            return False
+    def is_atm(e: expr):
+        """helper function to check if `e` is an `atm` """
+        match e:
+            case Constant(c):
+                return True
+                return isinstance(c, bool) or isinstance(c, int)
+            case Name(_):
+                return True
+        return False
+
+    def letize(self, exp: expr) -> expr:
+        """using `let`s to remove complex in an expression"""
+        # TODO: also allow some `exp`s rather than atoms only
+        (tail, temps) = self.rco_exp(exp, False)
+        for var in reversed(temps):
+            tail = Let(var[0], var[1], tail)
+        return tail
+        
+        # var_name = Name("let_pyctemp_var" + str(times))
+        # if Compiler.is_atm(exp):
+        #     return exp
+        # match exp:
+        #     case UnaryOp(uniop, oprd):
+        #         if Compiler.is_atm(oprd):
+        #             return UnaryOp(uniop, oprd)
+        #     case others: # already an `exp` in L_if^ANF
+        #         return others
+
+    def rco_exp(self, e: expr, need_atomic: bool) -> Tuple[expr, Temporaries]:
 
         temps = []
         # tail must be assigned in the match cases
-        if is_atm(e):
+        if Compiler.is_atm(e):
+            print(e)
             """nothing need to do if it's already an `atm`"""
             return (e, temps)
 
         match e:
             # recursively call rco_exp on each op
-            case UnaryOp(USub(), exp):
-                if is_atm(exp):
+            # shrink `and` & `or`
+            case BoolOp(And(), [e1, e2]):
+                return self.rco_exp(IfExp(e1, e2, Constant(False)), need_atomic)
+            case BoolOp(Or(), [e1, e2]):
+                return self.rco_exp(IfExp(e1, Constant(True), e2), need_atomic)
+            case UnaryOp(uniop, exp):
+                # `Not()` and `USub`
+                if Compiler.is_atm(exp):
                     tail = e
                 else:
                     (atm, temps) = self.rco_exp(exp, True)
-                    tail = UnaryOp(USub(), atm)
+                    tail = UnaryOp(uniop, atm)
             case BinOp(exp1, Add(), exp2):
-                if is_atm(exp1):
+                if Compiler.is_atm(exp1):
                     (exp1_atm, exp1_temps) = (exp1, [])
                 else:
                     (exp1_atm, exp1_temps) = self.rco_exp(exp1, True)
 
-                if is_atm(exp2):
+                if Compiler.is_atm(exp2):
                     (exp2_atm, exp2_temps) = (exp2, [])
                 else:
                     (exp2_atm, exp2_temps) = self.rco_exp(exp2, True)
 
                 tail = BinOp(exp1_atm, Add(), exp2_atm)
                 temps = exp1_temps + exp2_temps
+            case Compare(left, [cmp], [right]):
+                # similar to `BinOp` case
+                if Compiler.is_atm(left):
+                    (left_atm, left_temps) = (left, [])
+                else:
+                    (left_atm, left_temps) = self.rco_exp(left, True)
+
+                if Compiler.is_atm(right):
+                    (right_atm, right_temps) = (right, [])
+                else:
+                    (right_atm, right_temps) = self.rco_exp(right, True)
+
+                tail = Compare(left_atm, [cmp], [right_atm])
+                temps = left_temps + right_temps
+            case IfExp(exp_test, exp_body, exp_else):
+                (tail, test_temps) = self.rco_exp(exp_test, False)
+                tail = IfExp(tail, self.letize(exp_body), self.letize(exp_else))
+                temps = test_temps
             case Call(Name('input_int'), []):
                 tail = e
+            case _:
+                raise Exception(
+                        'error in rco_exp, unsupported expression ' + repr(e))
 
         if need_atomic:
             var = Name("pyc_temp_var_" + str(self.temp_count))
@@ -121,6 +188,10 @@ class Compiler:
             case Assign([Name(var)], exp):
                 (exp_rcoed, temps) = self.rco_exp(exp, False)
                 tail = Assign([Name(var)], exp_rcoed)
+            case If(exp, stmts_body, stmts_else):
+                body_rcoed = [new_stat for s in stmts_body for new_stat in self.rco_stmt(s)]
+                else_rcoed = [new_stat for s in stmts_else for new_stat in self.rco_stmt(s)]
+                tail = If(exp, body_rcoed, else_rcoed)
 
         for binding in temps:
             result.append(Assign([binding[0]], binding[1]))
@@ -129,6 +200,10 @@ class Compiler:
         return result
 
     def remove_complex_operands(self, p: Module) -> Module:
+        print("\n======= AST of the original program")
+        print(p)
+        print("\n======= AST ends")
+
         match p:
             case Module(stmts):
                 new_stmts = [
