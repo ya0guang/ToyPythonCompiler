@@ -8,10 +8,20 @@ import interp_Pvar
 from interp_x86 import eval_x86
 
 prog = """
-pyc_temp_var_0 = input_int()
-pyc_temp_var_3 = 42 if (input_int() == 0 if pyc_temp_var_0 == 1 else input_int() == 2) else 777
-print(pyc_temp_var_3)
+x = 1
+y = 1
+if x == y:
+    print (x + 5)
+else:
+    print (y + 7)
+print(x + y)
 """
+
+# prog = """
+# pyc_temp_var_0 = input_int()
+# pyc_temp_var_3 = 42 if (input_int() == 0 if pyc_temp_var_0 == 1 else input_int() == 2) else 777
+# print(pyc_temp_var_3)
+# """
 
 # pyc_temp_var_0 = input_int()
 # pyc_temp_var_3 = (10 + 32 if (let Name('pyc_temp_var_1') = Call(Name('input_int'), []) in Compare(Name('pyc_temp_var_1'), [Eq()], [Constant(0)]) if pyc_temp_var_0 == 1 else let Name('pyc_temp_var_2') = Call(Name('input_int'), []) in Compare(Name('pyc_temp_var_2'), [Eq()], [Constant(2)])) else 700 + 77)

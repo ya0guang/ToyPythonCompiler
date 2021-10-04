@@ -288,9 +288,7 @@ class Compiler:
                 return self.explicate_effect(value, cont)
             case If(test, body, orelse):
                 # `cont` must be nonempty.
-                # TODO: trampoline
                 trampoline = self.create_block(cont)
-                self.explicate_pred(test, body, orelse)
                 body_exped = self.explicate_stmts(body, [Goto(trampoline)])
                 orelse_exped = self.explicate_stmts(orelse, [Goto(trampoline)])
                 return self.explicate_pred(test, body_exped, orelse_exped)
