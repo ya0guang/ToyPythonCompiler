@@ -5,11 +5,22 @@ import type_check_Pif
 import interp_Pif
 import interp_Cif
 import interp_Pvar
+from interp_x86 import eval_x86
 
 prog = """
-pyc_temp_var_0 = (777 if (False if not False else True) else 42)
-print(pyc_temp_var_0)
+pyc_temp_var_0 = input_int()
+pyc_temp_var_3 = 42 if (input_int() == 0 if pyc_temp_var_0 == 1 else input_int() == 2) else 777
+print(pyc_temp_var_3)
 """
+
+# pyc_temp_var_0 = input_int()
+# pyc_temp_var_3 = (10 + 32 if (let Name('pyc_temp_var_1') = Call(Name('input_int'), []) in Compare(Name('pyc_temp_var_1'), [Eq()], [Constant(0)]) if pyc_temp_var_0 == 1 else let Name('pyc_temp_var_2') = Call(Name('input_int'), []) in Compare(Name('pyc_temp_var_2'), [Eq()], [Constant(2)])) else 700 + 77)
+# print(pyc_temp_var_3)
+
+# prog = """
+# pyc_temp_var_0 = (42 if 2 > 1 else 0)
+# print(pyc_temp_var_0)
+# """
 
 # prog = """
 # x = 1
@@ -110,8 +121,11 @@ cif_interp = interp_Cif.InterpCif()
 cif_interp.interp_C(p_exped)
 
 print("\n======= selecting instructions")
-p_x64_var = compiler.select_instructions(p_rcoed)
-print(p_x64_var)
+p_x64 = compiler.select_instructions(p_exped)
+print(p_x64)
+
+print("\n======= evaluating x86 program")
+eval_x86.interp_x86(p_x64)
 
 print("\n======= uncovering live after sets")
 las = compiler.uncover_live(p_x64_var)
@@ -126,7 +140,6 @@ print(compiler.int_graph.show())
 print("\n======= building move graph")
 rv = compiler.build_move_graph(p_x64_var.body)
 print(compiler.move_graph.show())
-
 
 print("\n======= graph coloring")
 coloring = compiler.color_graph(compiler.int_graph)

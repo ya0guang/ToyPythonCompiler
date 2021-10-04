@@ -232,6 +232,7 @@ class Compiler:
             case IfExp(test, body, orelse):
                 # dispatch to `explicate_pred`
                 # `cont` must not be empty
+
                 trampoline = self.create_block(cont)
                 body_ss = self.explicate_assign(body, lhs, [Goto(trampoline)])
                 orelse_ss = self.explicate_assign(orelse, lhs, [Goto(trampoline)])
@@ -263,12 +264,17 @@ class Compiler:
                 # in `IfExp` inside pred, body and orelse must also be predicate
                 thn_label = self.create_block(thn)
                 els_label = self.create_block(els)
-                body_ss = [If(body, [Goto(thn_label)], [Goto(els_label)])]
-                orelse_ss = [If(orelse, [Goto(thn_label)], [Goto(els_label)])]
+                # TODO: what if body/orelse is T/F?
+                # body_ss = [If(body, [Goto(thn_label)], [Goto(els_label)])]
+                body_ss = self.explicate_pred(body, [Goto(thn_label)], [Goto(els_label)])
+                # orelse_ss = [If(orelse, [Goto(thn_label)], [Goto(els_label)])]
+                orelse_ss = self.explicate_pred(orelse, [Goto(thn_label)], [Goto(els_label)])
                 return self.explicate_pred(test, body_ss, orelse_ss)
-            case Let(var, rhs, body):
+            case Let(var, let_rhs, body):
+                # `body must be a predicate`
                 # TODO
-                return []
+                # print("DEBUG: Let, cnd:", cnd)
+                return [Assign([var], let_rhs)] + self.explicate_pred(body, thn, els)
             case _:
                 return [If(Compare(cnd, [Eq()], [Constant(False)]),
                     [Goto(self.create_block(els))],
@@ -311,26 +317,56 @@ class Compiler:
     ############################################################################
     # Select Instructions
     ############################################################################
+    
+    def condition_abbr(cmp: cmpop) -> str:
+        """covert the compare operation to an abbreviation in instruction"""
+        match cmp:
+            case Eq():
+                return 'e'
+            case NotEq():
+                return 'ne'
+            case Gt():
+                return 'g'
+            case GtE():
+                return 'ge'
+            case Lt():
+                return 'l'
+            case LtE():
+                return 'le'
+            case _:
+                raise Exception('error in condition_abbr, cmp not supported' + repr(cmp))
 
     def select_arg(self, e: expr) -> arg:
         match e:
+            case Constant(True):
+                return Immediate(1)
+            case Constant(False):
+                return Immediate(0)
             case Constant(c):
                 return Immediate(c)
             case Name(var):
                 return Variable(var)
 
     def select_expr(self, e: expr) -> List[instr]:
+
+
         # pretending the variable will always be assigned
         instrs = []
         match e:
             case Call(Name('input_int'), []):
                 instrs.append(Callq('read_int', 0))
-                instrs.append(
-                    Instr('movq', [Reg('rax'), Variable("Unnamed_Pyc_Var")]))
+                instrs.append(Instr('movq', [Reg('rax'), Variable("Unnamed_Pyc_Var")]))
             case UnaryOp(USub(), atm):
-                instrs.append(
-                    Instr('movq', [self.select_arg(atm), Variable("Unnamed_Pyc_Var")]))
+                instrs.append(Instr('movq', [self.select_arg(atm), Variable("Unnamed_Pyc_Var")]))
                 instrs.append(Instr('negq', [Variable("Unnamed_Pyc_Var")]))
+            case UnaryOp(Not(), atm):
+                instrs.append(Instr('movq', [self.select_arg(atm), Variable("Unnamed_Pyc_Var")]))
+                instrs.append(Instr('xorq', [Immediate(1), Variable("Unnamed_Pyc_Var")]))
+            case Compare(atm1, [cmp], [atm2]):
+                # switch atm1 and atm2
+                instrs.append(Instr('cmpq', [self.select_arg(atm2), self.select_arg(atm1)]))
+                instrs.append(Instr('set' + Compiler.condition_abbr(cmp), [Reg('al')]))
+                instrs.append(Instr('movzbq', [Reg('al'), Variable("Unnamed_Pyc_Var")]))
             case BinOp(atm1, Add(), atm2):
                 # TODO: optimize when the oprand and destination is the same
                 # if isinstance(atm1, Name):
@@ -365,10 +401,28 @@ class Compiler:
         instrs = []
         match s:
             # TODO: may delete all instructions containing `Variable("Unnamed_Pyc_Var")``
+            case If(test, body, orelse):
+                assert isinstance(body[0], Goto)
+                body_label = body[0].label
+                assert isinstance(orelse[0], Goto)
+                else_label = orelse[0].label
+                match test:
+                    case Compare(atm1, [cmp], [atm2]):
+                        instrs.append(Instr('cmpq', [self.select_arg(atm2), self.select_arg(atm1)]))
+                        abbr = Compiler.condition_abbr(cmp)
+                    case _:
+                        raise Exception('error in select_expr, if: invlaid test ' + repr(test))
+                instrs.append(JumpIf(abbr, body_label))
+                instrs.append(Jump(else_label))
+            case Return(rv):
+                instrs.append(
+                    Instr('movq', [self.select_arg(rv), Reg('rax')]))
             case Expr(Call(Name('print'), [atm])):
                 instrs.append(
                     Instr('movq', [self.select_arg(atm), Reg('rdi')]))
                 instrs.append(Callq('print_int', 1))
+            case Goto(label):
+                instrs.append(Jump(label))
             case Expr(exp):
                 instrs += self.select_expr(exp)
             case Assign([Name(var)], exp):
@@ -378,9 +432,17 @@ class Compiler:
 
     def select_instructions(self, p: Module) -> X86Program:
         match p:
-            case Module(stmts):
-                insts = [inst for s in stmts for inst in self.select_stmt(s)]
-                return X86Program(insts)
+            # case Module(stmts):
+            #     insts = [inst for s in stmts for inst in self.select_stmt(s)]
+            #     return X86Program(insts)
+            case CProgram(blks):
+                x86_blks = {}
+                for (label, block) in blks.items():
+                    x86_blks[label] = [inst for s in block for inst in self.select_stmt(s)]
+                return X86Program(x86_blks)
+            case _:
+                raise Exception(
+                        'error in read_write_sets, select_instructions' + repr(p))
 
     ############################################################################
     # Liveness after set generation
