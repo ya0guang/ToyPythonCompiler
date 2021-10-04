@@ -3,23 +3,30 @@ from compiler import *
 from utils import repr_Module
 import type_check_Pif
 import interp_Pif
+import interp_Cif
+import interp_Pvar
 
 prog = """
-x = 1
-y = 1
-if False or x!= y and x == y or True:
-  u = x < y
-  v = x <= y
-  w = x > y
-  z = x >= y
-else:
-  u = True
-  v = True
-  w = True
-  z = True
-
-print((x +- y if not u and v else 0))
+pyc_temp_var_0 = (777 if (False if not False else True) else 42)
+print(pyc_temp_var_0)
 """
+
+# prog = """
+# x = 1
+# y = 1
+# if False or x!= y and x == y or True:
+#   u = x < y
+#   v = x <= y
+#   w = x > y
+#   z = x >= y
+# else:
+#   u = True
+#   v = True
+#   w = True
+#   z = True
+
+# print((x +- y if not u and v else 0))
+# """
 
 # test program here
 # prog = """
@@ -71,6 +78,9 @@ print((x +- y if not u and v else 0))
 # print(x1 + - x2 + x3 + - x4 + x5 + - x6 + x7 + - x8 + x9 + - x10 + x11 + - x12 + x13 + - x14 + x15 + - x16 + 42)
 # """
 
+interp = interp_Pif.InterpPif()
+# interp = interp_Pvar.InterpPvar()
+
 p = parse(prog)
 
 print("\n======= AST of the original program")
@@ -80,7 +90,6 @@ type_check_Pif.TypeCheckPif().type_check_P(p)
 print("\n======= type check passes")
 
 print("\n======= interpreting original program")
-interp = interp_Pif.InterpPif()
 interp.interp_P(p)
 
 print("\n======= interpreting RCOed program")
@@ -90,6 +99,15 @@ interp.interp_P(p_rcoed)
 
 print("\n======= printing RCOed program")
 print(p_rcoed)
+
+print("\n======= explicate control")
+print("\n======= printing EXPed program")
+p_exped = compiler.explicate_control(p_rcoed)
+print(p_exped)
+
+print("\n======= interpreting EXPed program")
+cif_interp = interp_Cif.InterpCif()
+cif_interp.interp_C(p_exped)
 
 print("\n======= selecting instructions")
 p_x64_var = compiler.select_instructions(p_rcoed)

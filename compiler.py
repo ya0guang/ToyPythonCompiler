@@ -42,6 +42,7 @@ class Compiler:
         self.read_set_dict = {}
         self.write_set_dict = {}
         self.live_after_set_dict = {}
+        self.basic_blocks = {}
         # this list can be changed for testing spilling
         self.allocatable = [Reg(x) for x in allocatable]
         all_reg = [Reg('rsp'), Reg('rbp'), Reg('rax')] + self.allocatable
@@ -96,23 +97,12 @@ class Compiler:
         for var in reversed(temps):
             tail = Let(var[0], var[1], tail)
         return tail
-        
-        # var_name = Name("let_pyctemp_var" + str(times))
-        # if Compiler.is_atm(exp):
-        #     return exp
-        # match exp:
-        #     case UnaryOp(uniop, oprd):
-        #         if Compiler.is_atm(oprd):
-        #             return UnaryOp(uniop, oprd)
-        #     case others: # already an `exp` in L_if^ANF
-        #         return others
 
     def rco_exp(self, e: expr, need_atomic: bool) -> Tuple[expr, Temporaries]:
 
         temps = []
         # tail must be assigned in the match cases
         if Compiler.is_atm(e):
-            print(e)
             """nothing need to do if it's already an `atm`"""
             return (e, temps)
 
@@ -200,15 +190,123 @@ class Compiler:
         return result
 
     def remove_complex_operands(self, p: Module) -> Module:
-        print("\n======= AST of the original program")
-        print(p)
-        print("\n======= AST ends")
-
         match p:
             case Module(stmts):
                 new_stmts = [
                     new_stat for s in stmts for new_stat in self.rco_stmt(s)]
                 return Module(new_stmts)
+
+    ############################################################################
+    # Explicate Control
+    ############################################################################
+
+
+    # def create_block(stmts, basic_blocks):
+    #     label = label_name(generate_name('block'))
+    #     basic_blocks[label] = stmts
+    #     return Goto(label)
+
+    def create_block(self, stmts: List[stmt], label: str = None) -> str:
+        """create a block and add it to the block dict,
+        return label name of the new block"""
+        if not label:
+            label = label_name(generate_name('block'))
+        
+        self.basic_blocks[label] = stmts
+        return label
+
+    def explicate_effect(self, e, cont):
+        match e:
+            case IfExp(test, body, orelse):
+                return self.explicate_pred(test, body, orelse) + cont
+            case Call(func, args):
+                return [Expr(e)] + cont
+            case Let(var, rhs, body):
+                ...
+            case _:
+                return cont
+
+
+    def explicate_assign(self, rhs: expr, lhs: Name, cont: List[stmt]) -> List[stmt]:
+        match rhs:
+            case IfExp(test, body, orelse):
+                # dispatch to `explicate_pred`
+                # `cont` must not be empty
+                trampoline = self.create_block(cont)
+                body_ss = self.explicate_assign(body, lhs, [Goto(trampoline)])
+                orelse_ss = self.explicate_assign(orelse, lhs, [Goto(trampoline)])
+                return self.explicate_pred(test, body_ss, orelse_ss)
+            case Let(var, let_rhs, let_body):
+                return [Assign([var], let_rhs)] + self.explicate_assign(let_body, lhs, []) + cont
+            case _:
+                return [Assign([lhs], rhs)] + cont
+    
+    def explicate_pred(self, cnd: expr, thn: List[stmt], els: List[stmt]):
+        match cnd:
+            case Compare(left, [op], [right]):
+                return [If(cnd,
+                    [Goto(self.create_block(thn))],
+                    [Goto(self.create_block(els))])]
+            case Constant(True):
+                return thn
+            case Constant(False):
+                return els
+            case UnaryOp(Not(), operand):
+                # return [If(UnaryOp(Not(), operand),
+                #     [Goto(self.create_block(thn))],
+                #     [Goto(self.create_block(els))])]
+                # change to a compare here
+                return [If(Compare(operand, [Eq()], [Constant(False)]),
+                    [Goto(self.create_block(thn))],
+                    [Goto(self.create_block(els))])]
+            case IfExp(test, body, orelse):
+                # in `IfExp` inside pred, body and orelse must also be predicate
+                thn_label = self.create_block(thn)
+                els_label = self.create_block(els)
+                body_ss = [If(body, [Goto(thn_label)], [Goto(els_label)])]
+                orelse_ss = [If(orelse, [Goto(thn_label)], [Goto(els_label)])]
+                return self.explicate_pred(test, body_ss, orelse_ss)
+            case Let(var, rhs, body):
+                # TODO
+                return []
+            case _:
+                return [If(Compare(cnd, [Eq()], [Constant(False)]),
+                    [Goto(self.create_block(els))],
+                    [Goto(self.create_block(thn))])]
+
+    def explicate_stmt(self, s, cont) -> List[stmt]:
+        match s:
+            case Assign([lhs], rhs):
+                return self.explicate_assign(rhs, lhs, cont)
+            case Expr(value):
+                return self.explicate_effect(value, cont)
+            case If(test, body, orelse):
+                # `cont` must be nonempty.
+                # TODO: trampoline
+                trampoline = self.create_block(cont)
+                self.explicate_pred(test, body, orelse)
+                body_exped = self.explicate_stmts(body, [Goto(trampoline)])
+                orelse_exped = self.explicate_stmts(orelse, [Goto(trampoline)])
+                return self.explicate_pred(test, body_exped, orelse_exped)
+                # cont = [If(test, [Goto(self.explicate_stmts(body))], [Goto(self.explicate(orelse))])] + cont
+
+        return cont
+    
+    def explicate_stmts(self, ss: List[stmt], cont) -> List[stmt]:
+        for s in reversed(ss):
+            cont = self.explicate_stmt(s, cont)
+        
+        return cont
+
+    def explicate_control(self, p: Module) -> CProgram:
+        cont = [Return(Constant(0))]
+        label = label_name('start')
+        match p:
+            case Module(body):
+                new_body = self.explicate_stmts(body, cont)
+                self.create_block(new_body, label)
+                # print("DEBUG: .start: ", self.basic_blocks[label])
+                return CProgram(self.basic_blocks)
 
     ############################################################################
     # Select Instructions
