@@ -10,11 +10,18 @@ from interp_x86 import eval_x86
 prog = """
 x = 1
 y = 1
-if x == y:
-    print (x + 5)
+if False or x!= y and x == y or True:
+  u = x < y
+  v = x <= y
+  w = x > y
+  z = x >= y
 else:
-    print (y + 7)
-print(x + y)
+  u = True
+  v = True
+  w = True
+  z = True
+
+print((x +- y if not u and v else 0))
 """
 
 # prog = """

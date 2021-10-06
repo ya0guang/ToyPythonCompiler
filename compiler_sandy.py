@@ -39,21 +39,15 @@ class Compiler:
     callee_saved = [Reg(x) for x in callee_saved]
 
     def __init__(self):
-        self.basic_blocks = {}
-        # mappings from a single instruction to a set
         self.read_set_dict = {}
         self.write_set_dict = {}
-        self.live_before_set_dict = {}
-        self.live_before_set_dict = {}
+        self.live_after_set_dict = {}
+        self.basic_blocks = {}
         # this list can be changed for testing spilling
         self.allocatable = [Reg(x) for x in allocatable]
         all_reg = [Reg('rsp'), Reg('rbp'), Reg('rax')] + self.allocatable
         self.int_graph = UndirectedAdjList()
         self.move_graph = UndirectedAdjList()
-        self.control_flow_graph = DirectedAdjList()
-        self.live_before_block = {}
-        # why need this?
-        self.sorted_control_flow_graph = []
         self.used_callee = set()
 
         self.color_reg_map = {}
@@ -91,7 +85,7 @@ class Compiler:
         match e:
             case Constant(c):
                 return True
-                return isinstance(c, bool) or isinstance(c, int)
+                # return isinstance(c, bool) or isinstance(c, int)
             case Name(_):
                 return True
         return False
@@ -126,8 +120,7 @@ class Compiler:
                 else:
                     (atm, temps) = self.rco_exp(exp, True)
                     tail = UnaryOp(uniop, atm)
-            case BinOp(exp1, binop, exp2):
-                """Sub() and Add()"""
+            case BinOp(exp1, Add(), exp2):
                 if Compiler.is_atm(exp1):
                     (exp1_atm, exp1_temps) = (exp1, [])
                 else:
@@ -138,7 +131,20 @@ class Compiler:
                 else:
                     (exp2_atm, exp2_temps) = self.rco_exp(exp2, True)
 
-                tail = BinOp(exp1_atm,binop, exp2_atm)
+                tail = BinOp(exp1_atm, Add(), exp2_atm)
+                temps = exp1_temps + exp2_temps
+            case BinOp(exp1, Sub(), exp2):
+                if Compiler.is_atm(exp1):
+                    (exp1_atm, exp1_temps) = (exp1, [])
+                else:
+                    (exp1_atm, exp1_temps) = self.rco_exp(exp1, True)
+
+                if Compiler.is_atm(exp2):
+                    (exp2_atm, exp2_temps) = (exp2, [])
+                else:
+                    (exp2_atm, exp2_temps) = self.rco_exp(exp2, True)
+
+                tail = BinOp(exp1_atm, Sub(), exp2_atm)
                 temps = exp1_temps + exp2_temps
             case Compare(left, [cmp], [right]):
                 # similar to `BinOp` case
@@ -186,10 +192,9 @@ class Compiler:
                 (exp_rcoed, temps) = self.rco_exp(exp, False)
                 tail = Assign([Name(var)], exp_rcoed)
             case If(exp, stmts_body, stmts_else):
-                # need test
                 (exp_rcoed, temps) = self.rco_exp(exp, False)
-                body_rcoed = [new_stat for s in stmts_body for new_stat in self.rco_stmt(s)]
-                else_rcoed = [new_stat for s in stmts_else for new_stat in self.rco_stmt(s)]
+                body_rcoed = [new_stat for st in stmts_body for new_stat in self.rco_stmt(st)]
+                else_rcoed = [new_stat for st in stmts_else for new_stat in self.rco_stmt(st)]
                 tail = If(exp_rcoed, body_rcoed, else_rcoed)
 
         for binding in temps:
@@ -205,7 +210,7 @@ class Compiler:
                     new_stat for s in stmts for new_stat in self.rco_stmt(s)]
                 return Module(new_stmts)
 
-    ############################################################################
+   ############################################################################
     # Explicate Control
     ############################################################################
 
@@ -355,7 +360,6 @@ class Compiler:
                 return Variable(var)
 
     def select_expr(self, e: expr) -> List[instr]:
-        # TODO: binary Sub
         # pretending the variable will always be assigned
         instrs = []
         match e:
@@ -383,12 +387,6 @@ class Compiler:
                     Instr('movq', [self.select_arg(atm1), Variable("Unnamed_Pyc_Var")]))
                 instrs.append(
                     Instr('addq', [self.select_arg(atm2), Variable("Unnamed_Pyc_Var")]))
-            case BinOp(atm1, Sub(), atm2):
-                # may need test
-                instrs.append(
-                    Instr('movq', [self.select_arg(atm1), Variable("Unnamed_Pyc_Var")]))
-                instrs.append(
-                    Instr('subq', [self.select_arg(atm2), Variable("Unnamed_Pyc_Var")]))            
             case _:
                 instrs.append(
                     Instr('movq', [self.select_arg(e), Variable("Unnamed_Pyc_Var")]))
@@ -442,7 +440,7 @@ class Compiler:
 
         return instrs
 
-    def select_instructions(self, p: CProgram) -> X86Program:
+    def select_instructions(self, p: Module) -> X86Program:
         match p:
             # case Module(stmts):
             #     insts = [inst for s in stmts for inst in self.select_stmt(s)]
@@ -473,109 +471,47 @@ class Compiler:
 
             return extracted
 
-        def read_write_sets_and_jump(s: instr) -> set[str]:
-            """take an instrunction, analyze the read/write locations of each instruction and return the potential jumping target (label) if it's a jump"""
+        def read_write_sets(s: instr):
+            """take an instrunction, return sets of its read and write locations"""
 
             read_set = set()
             write_set = set()
-            target = None
 
             match s:
-                #TODO: Instr cmpq, xorq, set, movzbq need to be added? Yes
                 case Instr("movq", [src, dest]):
                     (read_set, write_set) = (extract_locations([src]), extract_locations([dest]))
                 case Instr("addq", [arg1, arg2]):
                     (read_set, write_set) = (extract_locations([arg1, arg2]), extract_locations([arg2]))
                 case Instr("negq", [arg]):
                     (read_set, write_set) = (extract_locations([arg]), extract_locations([arg]))
-                case Instr("cmpq", [arg1, arg2]):
-                    (read_set, write_set) = (extract_locations([arg1, arg2]), {})
-                case Instr("xorq", [arg1, arg2]):
-                    (read_set, write_set) = (extract_locations([arg1, arg2]), {})
-                case Instr("set", [art1, arg2]):
-                    # TODO: match each sub instructions of `set`, maybe in an elegant way?
-                    (read_set, write_set) = (extract_locations([arg2]), extract_locations([arg2]))
                 case Callq(_func_name, num_args):
                     (read_set, write_set) = (extract_locations(Compiler.arg_passing[:num_args]), extract_locations(Compiler.caller_saved))
-                case Jump(dest):
-                    target = dest
-                case JumpIf(_cc, dest):
-                    target = dest
                 case _:
                     raise Exception(
                         'error in read_write_sets, unhandled' + repr(s))
 
             self.read_set_dict[s] = read_set
             self.write_set_dict[s] = write_set
-            return target
         
         last_set = set()
 
-        # generate the read & write set for each instruction, and build CFG 
-        assert(isinstance(p, X86Program))
-
-        ####### Build Control Flow Graph ##########
-        # Hongbo: I use label here to build control_flow_graph, please use self.basic_blocks[label] or p.body[label] to find the corres block
+        # generate the read & write set for each instruction
         if type(p.body) == dict:
-            self.basic_blocks = p.body
-            for (label, block) in p.body.items():
-                self.control_flow_graph.add_vertex(label)
-                jumping_targets = set()
-                for s in reversed(block):
-                    jumping_targets.add(read_write_sets_and_jump(s))
-                for t in jumping_targets:
-                    # please note the sequence of argument MATTERS
-                    self.control_flow_graph.add_edge(label, t)
-
-
-        #### Louis Code BEGINS
-
-        # else:  # list
-        #     for s in reversed(p.body):
-        #         read_write_sets_and_jump(s)
-        #         self.live_before_set_dict[s] = last_set.difference(self.write_set_dict[s]).union(self.read_set_dict[s])
-        #         last_set = self.live_before_set_dict[s]
-
-        # output
-
-        #print(self.control_flow_graph.num_vertices())
-        #print(self.control_flow_graph.show())
-        #Go through each block and determine if edge needs to be created (i.e. there is a jump)
-
-        self.control_flow_graph = transpose(self.control_flow_graph)
-        self.sorted_control_flow_graph = topological_sort(self.control_flow_graph)
-
-        print(self.sorted_control_flow_graph)
-
-        #TODO run it for each block based on sort
-
-        #TODO Change read and writes to run on each block?
-
-        # Hongbo: live after/before set need to be reconstructed from scratch. 
-        # The starting point of each block can be different, and you need to do this buttom up
-        # When you encounter a block which jumps to other block(s), check the live_before_set of the target(s) and union them, and that # will be the starting point of the current block.
-        for block in self.sorted_control_flow_graph:
-            edges_into_block = [edge for edge in self.control_flow_graph.in_edges(block)]
-            for node in edges_into_block:
-                #live after 
-            print(edges_into_block)
-            for s in p.body[block]:
-                read_write_sets(s) # Hongbo: you don't need to run this again
+            pass
+        else:  # list
+            for s in reversed(p.body):
+                read_write_sets(s)
                 self.live_after_set_dict[s] = last_set.difference(self.write_set_dict[s]).union(self.read_set_dict[s])
                 last_set = self.live_after_set_dict[s]
-                #print(self.live_after_set_dict)
-            self.live_before_block[block] = self.live_after_set_dict[p.body[block][0]] #set live_before of block to before of first one
-        #print(self.live_before_block)
 
-        #### Louis Code ENDS
-
+        # output
         if need_list:
             live_after_sets_list = []
             for s in p.body:
-                live_after_sets_list.append(self.live_before_set_dict[s])
+                live_after_sets_list.append(self.live_after_set_dict[s])
             return live_after_sets_list
         else:
-            return self.live_before_set_dict
+            return self.live_after_set_dict
 
     ############################################################################
     # inference and move graph building
@@ -600,6 +536,13 @@ class Compiler:
             las = las_list[i]  # live-after set
             match ins:
                 case Instr("movq", [src, dest]):
+                    for loc in las:
+                        self.int_graph.add_vertex(loc)
+                        if not (loc == src or loc == dest):
+                            self.int_graph.add_edge(loc, dest)
+                case Instr("movzbq", [src, dest]):
+                    # source = (src == Reg("al")) ? Reg("rax") : src
+                    # TODO: maybe make sure %al is seen as the entire %rax register
                     for loc in las:
                         self.int_graph.add_vertex(loc)
                         if not (loc == src or loc == dest):
@@ -794,6 +737,18 @@ class Compiler:
                 # MOV: Trivial move (move to same place after allocating registers)
                 # THROW AWAY (don't let it be added in in last case)
                 pass
+            case Instr("cmpq", [src, Immediate(v)]):
+                # 2nd arg must not be an immediate value
+                patched_instrs.append(
+                    Instr("movq", [Immediate(v), Reg("rax")]))
+                patched_instrs.append(
+                    Instr("cmpq", [src, Reg("rax")]))    
+            case Instr("movzbq", [src, Immediate(v)]):
+                # 2nd Argument must be a register
+                patched_instrs.append(
+                    Instr("movq", [Immediate(v), Reg("rax")]))
+                patched_instrs.append(
+                    Instr("movzbq", [src, Reg("rax")]))
             case _:
                 patched_instrs.append(i)
 
