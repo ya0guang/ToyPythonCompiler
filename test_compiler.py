@@ -8,21 +8,40 @@ import interp_Pvar
 from interp_x86 import eval_x86
 
 prog = """
-x = 1
-y = 1
-if False or x!= y and x == y or True:
-  u = x < y
-  v = x <= y
-  w = x > y
-  z = x >= y
-else:
-  u = True
-  v = True
-  w = True
-  z = True
-
-print((x +- y if not u and v else 0))
+x = input_int()
 """
+
+# prog = """
+# x = 1
+# y = 1
+# if False or x!= y and x == y or True:
+#     u = x < y
+#     v = x <= y
+#     w = x > y
+#     z = x >= y
+# else:
+#     u = True
+#     v = True
+#     w = True
+#     z = True
+# print((x - y if not u and v else 0))
+# """
+
+# prog = """
+# x = input_int()
+# pyc_temp_var_0 = x == 1
+# if not pyc_temp_var_0:
+#   if x == 0:
+#     y = 42
+#   else:
+#     y = 777
+
+# else:
+#   y = 0
+
+# print(y)
+# """
+
 
 # prog = """
 # pyc_temp_var_0 = input_int()
@@ -38,20 +57,6 @@ print((x +- y if not u and v else 0))
 # pyc_temp_var_0 = (42 if 2 > 1 else 0)
 # print(pyc_temp_var_0)
 # """
-
-# prog = """
-# x = 1
-# y = 1
-# if False or x!= y and x == y or True:
-#   u = x < y
-#   v = x <= y
-#   w = x > y
-#   z = x >= y
-# else:
-#   u = True
-#   v = True
-#   w = True
-#   z = True
 
 # print((x +- y if not u and v else 0))
 # """
@@ -145,17 +150,19 @@ print("\n======= evaluating x86 program")
 eval_x86.interp_x86(p_x64)
 
 print("\n======= uncovering live after sets")
-las = compiler.uncover_live(p_x64_var)
-for s in p_x64_var.body:
-    print(repr(s) + '\t' + str(las[s]))
+las = compiler.uncover_live(p_x64)
+for (label, block) in p_x64.body.items():
+    print(label)
+    for s in block:
+        print(repr(s) + '\t' + str(las[s]))
 
 print("\n======= building interference graph")
-las_list = compiler.uncover_live(p_x64_var, True)
-rv = compiler.build_interference(p_x64_var.body, las_list)
+las_dict = compiler.uncover_live(p_x64)
+rv = compiler.build_interference(las_dict)
 print(compiler.int_graph.show())
 
 print("\n======= building move graph")
-rv = compiler.build_move_graph(p_x64_var.body)
+rv = compiler.build_move_graph(p_x64.body)
 print(compiler.move_graph.show())
 
 print("\n======= graph coloring")
@@ -163,9 +170,20 @@ coloring = compiler.color_graph(compiler.int_graph)
 print(coloring)
 
 print("\n======= assigning homes")
-p_x64_stack = compiler.assign_homes(p_x64_var)
-print(p_x64_stack)
+p_x64_reg = compiler.assign_homes(p_x64)
+print(p_x64_reg)
+
+print("\n======= evaluating x86 program")
+eval_x86.interp_x86(p_x64_reg)
 
 print("\n======= patching instructions")
-p_x64_int = compiler.patch_instructions(p_x64_stack)
-print(p_x64_int)
+p_x64_patched = compiler.patch_instructions(p_x64_reg)
+print(p_x64_patched)
+
+print("\n======= geenrating prelude and conclusion")
+p_x64_final = compiler.prelude_and_conclusion(p_x64_patched)
+print(p_x64_final)
+
+print("\n======= evaluating x86 program")
+eval_x86.interp_x86(p_x64_final)
+
