@@ -7,9 +7,16 @@ import interp_Cif
 import interp_Pvar
 from interp_x86 import eval_x86
 
-prog = """
-x = input_int()
-"""
+# prog = """
+# a = 1
+
+# if a == 1:
+#     b = 2
+# else:
+#     b = 3
+
+# print(b)
+# """
 
 # prog = """
 # x = 1
@@ -40,6 +47,13 @@ x = input_int()
 #   y = 0
 
 # print(y)
+# """
+
+
+# prog = """
+# pyc_temp_var_0 = input_int()
+# pyc_temp_var_3 = 42 if (input_int() == 0 if pyc_temp_var_0 == 1 else input_int() == 2) else 777
+# print(pyc_temp_var_3)
 # """
 
 

@@ -5,6 +5,7 @@ from x86_ast import *
 from graph import *
 from priority_queue import *
 import os
+import types
 from typing import List, Tuple, Set, Dict
 
 # Type notes
@@ -23,6 +24,12 @@ allocatable = callee_saved + caller_saved
 allocatable.remove('rsp')
 allocatable.remove('rbp')
 allocatable.remove('rax')
+
+def force(promise):
+    if isinstance(promise, types.FunctionType):
+        return force(promise())
+    else:
+        return promise
 
 
 class Compiler:
@@ -207,21 +214,26 @@ class Compiler:
     ############################################################################
     # Explicate Control
     ############################################################################
+    
+    def create_block(self, promise, label: str = None) -> Goto:
+        stmts = force(promise)
+        match stmts:
+            case [Goto(l)]:
+                return Goto(l)
+            case _:
+                if not label:
+                    label = label_name(generate_name('block'))
+                self.basic_blocks[label] = stmts
+                return Goto(label)
 
-
-    # def create_block(stmts, basic_blocks):
-    #     label = label_name(generate_name('block'))
-    #     basic_blocks[label] = stmts
-    #     return Goto(label)
-
-    def create_block(self, stmts: List[stmt], label: str = None) -> str:
-        """create a block and add it to the block dict,
-        return label name of the new block"""
-        if not label:
-            label = label_name(generate_name('block'))
+    # def create_block(self, stmts: List[stmt], label: str = None) -> str:
+    #     """create a block and add it to the block dict,
+    #     return label name of the new block"""
+    #     if not label:
+    #         label = label_name(generate_name('block'))
         
-        self.basic_blocks[label] = stmts
-        return label
+    #     self.basic_blocks[label] = stmts
+    #     return label
 
     def explicate_effect(self, e, cont):
         match e:
@@ -242,20 +254,20 @@ class Compiler:
                 # `cont` must not be empty
 
                 trampoline = self.create_block(cont)
-                body_ss = self.explicate_assign(body, lhs, [Goto(trampoline)])
-                orelse_ss = self.explicate_assign(orelse, lhs, [Goto(trampoline)])
+                body_ss = self.explicate_assign(body, lhs, [trampoline])
+                orelse_ss = self.explicate_assign(orelse, lhs, [trampoline])
                 return self.explicate_pred(test, body_ss, orelse_ss)
             case Let(var, let_rhs, let_body):
-                return [Assign([var], let_rhs)] + self.explicate_assign(let_body, lhs, []) + cont
+                return [Assign([var], let_rhs)] + self.explicate_assign(let_body, lhs, []) + force(cont)
             case _:
-                return [Assign([lhs], rhs)] + cont
+                return [Assign([lhs], rhs)] + force(cont)
     
     def explicate_pred(self, cnd: expr, thn: List[stmt], els: List[stmt]):
         match cnd:
             case Compare(left, [op], [right]):
                 return [If(cnd,
-                    [Goto(self.create_block(thn))],
-                    [Goto(self.create_block(els))])]
+                    [self.create_block(thn)],
+                    [self.create_block(els)])]
             case Constant(True):
                 return thn
             case Constant(False):
@@ -266,18 +278,18 @@ class Compiler:
                 #     [Goto(self.create_block(els))])]
                 # change to a compare here
                 return [If(Compare(operand, [Eq()], [Constant(False)]),
-                    [Goto(self.create_block(thn))],
-                    [Goto(self.create_block(els))])]
+                    [self.create_block(thn)],
+                    [self.create_block(els)])]
             case IfExp(test, body, orelse):
                 # in `IfExp` inside pred, body and orelse must also be predicate
-                thn_label = self.create_block(thn)
-                els_label = self.create_block(els)
+                thn_goto = self.create_block(thn)
+                els_goto = self.create_block(els)
                 # TODO: what if body/orelse is T/F?
                 # body_ss = [If(body, [Goto(thn_label)], [Goto(els_label)])]
-                body_ss = self.explicate_pred(body, [Goto(thn_label)], [Goto(els_label)])
+                body_ss = lambda: self.explicate_pred(body, [thn_goto], [els_goto])
                 # orelse_ss = [If(orelse, [Goto(thn_label)], [Goto(els_label)])]
-                orelse_ss = self.explicate_pred(orelse, [Goto(thn_label)], [Goto(els_label)])
-                return self.explicate_pred(test, body_ss, orelse_ss)
+                orelse_ss = lambda: self.explicate_pred(orelse, [thn_goto], [els_goto])
+                return lambda: self.explicate_pred(test, body_ss, orelse_ss)
             case Let(var, let_rhs, body):
                 # `body must be a predicate`
                 # TODO
@@ -285,29 +297,27 @@ class Compiler:
                 return [Assign([var], let_rhs)] + self.explicate_pred(body, thn, els)
             case _:
                 return [If(Compare(cnd, [Eq()], [Constant(False)]),
-                    [Goto(self.create_block(els))],
-                    [Goto(self.create_block(thn))])]
+                    [self.create_block(els)],
+                    [self.create_block(thn)])]
 
     def explicate_stmt(self, s, cont) -> List[stmt]:
         match s:
             case Assign([lhs], rhs):
-                return self.explicate_assign(rhs, lhs, cont)
+                return lambda: self.explicate_assign(rhs, lhs, cont)
             case Expr(value):
-                return self.explicate_effect(value, cont)
+                return lambda: self.explicate_effect(value, cont)
             case If(test, body, orelse):
                 # `cont` must be nonempty.
                 trampoline = self.create_block(cont)
-                body_exped = self.explicate_stmts(body, [Goto(trampoline)])
-                orelse_exped = self.explicate_stmts(orelse, [Goto(trampoline)])
-                return self.explicate_pred(test, body_exped, orelse_exped)
-                # cont = [If(test, [Goto(self.explicate_stmts(body))], [Goto(self.explicate(orelse))])] + cont
+                body_exped = self.explicate_stmts(body, [trampoline])
+                orelse_exped = self.explicate_stmts(orelse, [trampoline])
+                return lambda: self.explicate_pred(test, body_exped, orelse_exped)
 
         return cont
     
     def explicate_stmts(self, ss: List[stmt], cont) -> List[stmt]:
         for s in reversed(ss):
             cont = self.explicate_stmt(s, cont)
-        
         return cont
 
     def explicate_control(self, p: Module) -> CProgram:
@@ -316,7 +326,7 @@ class Compiler:
         match p:
             case Module(body):
                 new_body = self.explicate_stmts(body, cont)
-                self.create_block(new_body, label)
+                self.create_block(new_body, label = label)
                 # print("DEBUG: .start: ", self.basic_blocks[label])
                 return CProgram(self.basic_blocks)
 

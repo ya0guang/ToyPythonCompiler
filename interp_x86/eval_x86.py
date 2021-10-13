@@ -222,7 +222,7 @@ class X86Emulator:
                 self.store_arg(a2, v)
 
             elif instr.data == 'addq':
-                print("DEBUG: ", a1, a2)
+                # print("DEBUG: ", a1, a2)
                 a1, a2 = instr.children
                 v1 = self.eval_arg(a1)
                 v2 = self.eval_arg(a2)
