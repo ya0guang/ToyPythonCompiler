@@ -18,21 +18,21 @@ from interp_x86 import eval_x86
 # print(b)
 # """
 
-# prog = """
-# x = 1
-# y = 1
-# if False or x!= y and x == y or True:
-#     u = x < y
-#     v = x <= y
-#     w = x > y
-#     z = x >= y
-# else:
-#     u = True
-#     v = True
-#     w = True
-#     z = True
-# print((x - y if not u and v else 0))
-# """
+prog = """
+x = 1
+y = 1
+if False or x!= y and x == y or True:
+    u = x < y
+    v = x <= y
+    w = x > y
+    z = x >= y
+else:
+    u = True
+    v = True
+    w = True
+    z = True
+print((x - y if not u and v else 0))
+"""
 
 # prog = """
 # x = input_int()

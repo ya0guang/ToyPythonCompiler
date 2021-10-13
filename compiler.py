@@ -488,12 +488,12 @@ class Compiler:
 
             return extracted
 
-        def read_write_sets_and_jump(s: instr) -> set[str]:
+        def analyze_instr(s: instr) -> set[str]:
             """take an instrunction, analyze the read/write locations of each instruction and return the potential jumping target (label) if it's a jump"""
 
             read_set = set()
             write_set = set()
-            target = None
+            target = set()
 
             match s:
                 #TODO: Instr cmpq, xorq, set, movzbq need to be added? Yes
@@ -520,9 +520,9 @@ class Compiler:
                 case Instr('nop', _):
                     pass
                 case Jump(dest):
-                    target = dest
+                    target.add(dest)
                 case JumpIf(_cc, dest):
-                    target = dest
+                    target.add(dest)
                 case _:
                     raise Exception(
                         'error in read_write_sets, unhandled' + repr(s))
@@ -535,6 +535,7 @@ class Compiler:
         assert(isinstance(p, X86Program))
 
         ####### Build Control Flow Graph ##########
+        
         # Hongbo: I use label here to build control_flow_graph, please use self.basic_blocks[label] or p.body[label] to find the corres block
 
         if type(p.body) == dict:
@@ -543,11 +544,8 @@ class Compiler:
                 self.control_flow_graph.add_vertex(label)
                 jumping_targets = set()
                 for s in reversed(block):
-                    jumping_targets.add(read_write_sets_and_jump(s))
+                    jumping_targets = jumping_targets.union(analyze_instr(s))
                 for t in jumping_targets:
-                    # Strange bug: why t can be None here????
-                    if not t:
-                        continue
                     # please note the sequence of argument MATTERS
                     self.control_flow_graph.add_edge(label, t)
 
