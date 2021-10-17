@@ -3,9 +3,11 @@ from ast import *
 from utils import *
 from x86_ast import *
 from graph import *
+from collections import deque
 from priority_queue import *
 import os
 import types
+from functools import *
 from typing import List, Tuple, Set, Dict
 
 # Type notes
@@ -30,6 +32,28 @@ def force(promise):
         return force(promise())
     else:
         return promise
+
+def analyze_dataflow(G: DirectedAdjList, transfer: FunctionType, bottom, join: FunctionType):
+    """return a mapping from vertices in G to their dataflow result"""
+    trans_G = transpose(G)
+    mapping = {}
+    for v in G.vertices():
+        mapping[v] = bottom
+    worklist = deque()
+    for v in G.vertices():
+        worklist.append(v)
+    while worklist:
+        node = worklist.pop()
+        input = reduce(join, [mapping[v] for v in G.out[node]], bottom)
+        # input = reduce(join, [mapping[v] for v in trans_G.adjacent(node)], bottom)
+        output = transfer(node, input)
+        if output != mapping[node]:
+            mapping[node] = output
+            # for v in G.adjacent(node):
+            for v in G.ins[node]:
+                worklist.append(v)
+    
+    return mapping
 
 
 class Compiler:
@@ -75,6 +99,7 @@ class Compiler:
         self.prelude_label = 'main'
         # assign this when iterating CFG
         self.conclusion_label = 'conclusion'
+        self.basic_blocks[self.conclusion_label] = []
         # make the initial conclusion non-empty to avoid errors
         # TODO: come up with a more elegant solution, maybe from `live_before_block`
         # self.basic_blocks[self.conclusion_label] = [Expr(Call(Name('input_int'), []))]
@@ -197,6 +222,15 @@ class Compiler:
                 body_rcoed = [new_stat for s in stmts_body for new_stat in self.rco_stmt(s)]
                 else_rcoed = [new_stat for s in stmts_else for new_stat in self.rco_stmt(s)]
                 tail = If(exp_rcoed, body_rcoed, else_rcoed)
+            case While(exp, stmts_body, []):
+                # TODO: special treatment for while loop
+                # TODO: letize exp
+                exp_rcoed = self.letize(exp)
+                # (exp_rcoed, temps) = self.rco_exp(exp, False)
+                body_rcoed = [new_stat for s in stmts_body for new_stat in self.rco_stmt(s)]
+                tail = While(exp_rcoed, body_rcoed, [])
+            case _:
+                raise Exception('error in rco_stmt, stmt not supported' + repr(s))
 
         for binding in temps:
             result.append(Assign([binding[0]], binding[1]))
@@ -216,6 +250,7 @@ class Compiler:
     ############################################################################
     
     def create_block(self, promise, label: str = None) -> Goto:
+        """promise can be a list of statements, or a function returning a list of statements"""
         stmts = force(promise)
         match stmts:
             case [Goto(l)]:
@@ -226,14 +261,15 @@ class Compiler:
                 self.basic_blocks[label] = stmts
                 return Goto(label)
 
-    # def create_block(self, stmts: List[stmt], label: str = None) -> str:
-    #     """create a block and add it to the block dict,
-    #     return label name of the new block"""
-    #     if not label:
-    #         label = label_name(generate_name('block'))
+    def create_block_no_lazy(self, stmts: List[stmt], label: str = None) -> str:
+        # TODO: 
+        """create a block and add it to the block dict,
+        return label name of the new block"""
+        if not label:
+            label = label_name(generate_name('block'))
         
-    #     self.basic_blocks[label] = stmts
-    #     return label
+        self.basic_blocks[label] = force(stmts)
+        return Goto(label)
 
     def explicate_effect(self, e, cont):
         match e:
@@ -294,7 +330,10 @@ class Compiler:
                 # `body must be a predicate`
                 # TODO
                 # print("DEBUG: Let, cnd:", cnd)
-                return [Assign([var], let_rhs)] + self.explicate_pred(body, thn, els)
+                tail = self.explicate_pred(body, thn, els)
+                # print("DEBUG: tail:", tail, "force: ", force(tail))
+                # return [Assign([var], let_rhs)] + self.explicate_pred(body, thn, els)
+                return [Assign([var], let_rhs)] + force(tail)
             case _:
                 return [If(Compare(cnd, [Eq()], [Constant(False)]),
                     [self.create_block(els)],
@@ -312,6 +351,14 @@ class Compiler:
                 body_exped = self.explicate_stmts(body, [trampoline])
                 orelse_exped = self.explicate_stmts(orelse, [trampoline])
                 return lambda: self.explicate_pred(test, body_exped, orelse_exped)
+            case While(cnd, body, []):
+                loopBlock = self.create_block([])
+                trampoline = self.create_block(cont)
+                body_exped = self.explicate_stmts(body, [loopBlock])
+                cnd_exped = self.explicate_pred(cnd, body_exped, [trampoline])
+                # update loop block to have the if condition
+                self.create_block_no_lazy(cnd_exped, loopBlock.label)
+                return [loopBlock]
 
         return cont
     
@@ -326,7 +373,7 @@ class Compiler:
         match p:
             case Module(body):
                 new_body = self.explicate_stmts(body, cont)
-                self.create_block(new_body, label = label)
+                self.create_block_no_lazy(new_body, label = label)
                 # print("DEBUG: .start: ", self.basic_blocks[label])
                 return CProgram(self.basic_blocks)
 
@@ -530,42 +577,58 @@ class Compiler:
             self.read_set_dict[s] = read_set
             self.write_set_dict[s] = write_set
             return target
-        
-        # generate the read & write set for each instruction, and build CFG 
-        assert(isinstance(p, X86Program))
 
-        ####### Build Control Flow Graph ##########
-        
-        # Hongbo: I use label here to build control_flow_graph, please use self.basic_blocks[label] or p.body[label] to find the corres block
-
-        if type(p.body) == dict:
-            self.basic_blocks = p.body
-            for (label, block) in p.body.items():
-                self.control_flow_graph.add_vertex(label)
-                jumping_targets = set()
-                for s in reversed(block):
-                    jumping_targets = jumping_targets.union(analyze_instr(s))
-                for t in jumping_targets:
-                    # please note the sequence of argument MATTERS
-                    self.control_flow_graph.add_edge(label, t)
-
-        for label in topological_sort(transpose(self.control_flow_graph)):
-            # conclusion block may not exist early
-            if label in self.basic_blocks:
-                block = self.basic_blocks[label]
-            else:
-                continue
-            last_set = set()
-            for out in self.control_flow_graph.out[label]:
-                # conclusion block may not exist early
-                if out in self.basic_blocks:
-                    last_set = last_set.union(self.live_before_set_dict[self.basic_blocks[out][0]])
+        def transfer(label: str, starting_las: set) -> set:
+            """take a label and the starting point(las), return the live before set of the block"""
+            block = self.basic_blocks[label]
+            last_set = starting_las
             for ins in reversed(block):
                 self.live_after_set_dict[ins] = last_set
                 self.live_before_set_dict[ins] = last_set.difference(self.write_set_dict[ins]).union(self.read_set_dict[ins])
                 last_set = self.live_before_set_dict[ins]
+            
+            return last_set
+
+
+        ####### Build Control Flow Graph ##########
         
-        print(self.live_before_set_dict)
+        # Hongbo: I use label here to build control_flow_graph, please use self.basic_blocks[label] or p.body[label] to find the corres block
+        
+        # generate the read & write set for each instruction, and build CFG 
+        assert(isinstance(p, X86Program))
+        assert(isinstance(p.body, dict))
+        self.basic_blocks = p.body
+        for (label, block) in p.body.items():
+            self.control_flow_graph.add_vertex(label)
+            jumping_targets = set()
+            for s in reversed(block):
+                jumping_targets = jumping_targets.union(analyze_instr(s))
+            for t in jumping_targets:
+                # please note the sequence of argument MATTERS
+                self.control_flow_graph.add_edge(label, t)
+
+        join = lambda x, y: x.union(y)
+
+        mapping = analyze_dataflow(self.control_flow_graph, transfer, set(), join)
+
+        # for label in topological_sort(transpose(self.control_flow_graph)):
+        #     # conclusion block may not exist early
+        #     if label in self.basic_blocks:
+        #         block = self.basic_blocks[label]
+        #     else:
+        #         continue
+        #     last_set = set()
+        #     for out in self.control_flow_graph.out[label]:
+        #         # conclusion block may not exist early
+        #         if out in self.basic_blocks:
+        #             last_set = last_set.union(self.live_before_set_dict[self.basic_blocks[out][0]])
+        #     for ins in reversed(block):
+        #         self.live_after_set_dict[ins] = last_set
+        #         self.live_before_set_dict[ins] = last_set.difference(self.write_set_dict[ins]).union(self.read_set_dict[ins])
+        #         last_set = self.live_before_set_dict[ins]
+        
+        print(mapping)
+        self.live_before_block = mapping
 
         return self.live_after_set_dict
 

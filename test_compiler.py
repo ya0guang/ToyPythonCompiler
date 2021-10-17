@@ -1,11 +1,60 @@
 from ast import *
 from compiler import *
 from utils import repr_Module
-import type_check_Pif
+import type_check_Pwhile
 import interp_Pif
 import interp_Cif
 import interp_Pvar
+import interp_Pwhile
 from interp_x86 import eval_x86
+
+
+
+prog ="""
+x = input_int()
+y = input_int()
+if ((True if x == y else True) if (True if False else x != y) else False):
+  u = x < y
+  v = x < y
+  w = x > y
+  z = x >= y
+else:
+  u = True
+  v = True
+  w = True
+  z = True
+pyc_temp_var_0 = (v if u else False)
+pyc_temp_var_1 = (x - y if not pyc_temp_var_0 else 0)
+print(pyc_temp_var_1)
+  
+"""
+# prog = """
+# while False:
+#   input_int()
+#   print(1)
+# print(42)
+# """
+
+# prog = """
+# sum = 0
+# m = 3
+# n = 4
+# i = 1
+# while i < m:
+#     j = 1
+#     while j < n:
+#         sum = sum + i + j
+#         j = j + 1
+#     i = i + 1
+# print(sum)
+# """
+
+# prog = """
+# x = 0
+# while (True if input_int() == 5 else False):
+#     x = x + 42
+# print(x)
+# """
 
 # prog = """
 # a = 1
@@ -18,21 +67,21 @@ from interp_x86 import eval_x86
 # print(b)
 # """
 
-prog = """
-x = 1
-y = 1
-if False or x!= y and x == y or True:
-    u = x < y
-    v = x <= y
-    w = x > y
-    z = x >= y
-else:
-    u = True
-    v = True
-    w = True
-    z = True
-print((x - y if not u and v else 0))
-"""
+# prog = """
+# x = 42
+# y = 0
+# if False or x!= y and x == y or True:
+#     u = x < y
+#     v = x <= y
+#     w = x > y
+#     z = x >= y
+# else:
+#     u = True
+#     v = True
+#     w = True
+#     z = True
+# print((x - y if not u and v else 0))
+# """
 
 # prog = """
 # x = input_int()
@@ -125,7 +174,7 @@ print((x - y if not u and v else 0))
 # print(x1 + - x2 + x3 + - x4 + x5 + - x6 + x7 + - x8 + x9 + - x10 + x11 + - x12 + x13 + - x14 + x15 + - x16 + 42)
 # """
 
-interp = interp_Pif.InterpPif()
+interp = interp_Pwhile.InterpPwhile()
 # interp = interp_Pvar.InterpPvar()
 
 p = parse(prog)
@@ -133,7 +182,7 @@ p = parse(prog)
 print("\n======= AST of the original program")
 print(p)
 
-type_check_Pif.TypeCheckPif().type_check_P(p)
+type_check_Pwhile.TypeCheckPwhile().type_check_P(p)
 print("\n======= type check passes")
 
 print("\n======= interpreting original program")
