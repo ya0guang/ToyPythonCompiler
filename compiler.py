@@ -910,24 +910,29 @@ class Compiler:
     ############################################################################
 
     def prelude_and_conclusion(self, p: X86Program) -> X86Program:
-        stack_frame_size = ((self.stack_count + 1) // 2) * 16
 
+        def align():
+            alignment = 8 * (len(self.used_callee) + self.stack_count) # current alignment
+            if (alignment % 16) != 0:
+                alignment += 8
+            return alignment - (8 * len(self.used_callee)) 
+            
         self.used_callee = list(self.used_callee)
+        stack_frame_size = align()
 
         prelude = []
         prelude.append(Instr('pushq', [Reg('rbp')]))
         prelude.append(Instr('movq', [Reg('rsp'), Reg('rbp')]))
-        # TODO: program crashes if store the value of some registers
-        # for r in self.used_callee:
-        #     prelude.append(Instr('pushq', [r]))
+        for r in self.used_callee:
+            prelude.append(Instr('pushq', [r]))
         # TODO: ignore this when sub 0
         prelude.append(Instr('subq', [Immediate(stack_frame_size), Reg('rsp')]))
         prelude.append((Jump('start')))
 
         conclusion = []
         conclusion.append(Instr('addq', [Immediate(stack_frame_size), Reg('rsp')]))
-        # for r in reversed(self.used_callee):
-        #     conclusion.append(Instr('popq', [r]))
+        for r in reversed(self.used_callee):
+            conclusion.append(Instr('popq', [r]))
         conclusion.append(Instr('popq', [Reg('rbp')]))
         conclusion.append(Instr('retq', []))
 
