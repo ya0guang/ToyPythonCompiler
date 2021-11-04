@@ -222,11 +222,9 @@ class X86Emulator:
                 self.store_arg(a2, v)
 
             elif instr.data == 'addq':
-                # print("DEBUG: ", a1, a2)
                 a1, a2 = instr.children
                 v1 = self.eval_arg(a1)
                 v2 = self.eval_arg(a2)
-                print("DEBUG: ", v1, v2)
                 self.store_arg(a2, v1 + v2)
 
             elif instr.data == 'subq':
@@ -277,10 +275,12 @@ class X86Emulator:
                         raise Exception('jump to invalid target ' + target)
                     return # after jumping, toss continuation
 
-            elif instr.data in ['sete', 'setl', 'setle', 'setg', 'setge']:
+            elif instr.data in ['sete', 'setne', 'setl', 'setle', 'setg', 'setge']:
                 a1 = instr.children[0]
 
                 if instr.data == 'sete' and self.registers['EFLAGS'] == 'e':
+                    self.store_arg(a1, 1)
+                elif instr.data == 'setne' and self.registers['EFLAGS'] != 'e':
                     self.store_arg(a1, 1)
                 elif instr.data == 'setl' and self.registers['EFLAGS'] == 'l':
                     self.store_arg(a1, 1)
