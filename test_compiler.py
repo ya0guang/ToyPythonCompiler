@@ -1,14 +1,18 @@
 from ast import *
 from compiler import *
 from utils import repr_Module
-import type_check_Pwhile
-import interp_Pif
-import interp_Cif
-import interp_Pvar
-import interp_Pwhile
+# import type_check_Lfun
+# import type_check_Cfun
+# import interp_Lfun
+# import interp_Cfun
+
+import type_check_Ltup
+import type_check_Ctup
+import interp_Ltup
+import interp_Ctup
+# import interp_Pvar
+# import interp_Pwhile
 from interp_x86 import eval_x86
-
-
 
 prog ="""
 x = input_int()
@@ -174,7 +178,7 @@ print(pyc_temp_var_1)
 # print(x1 + - x2 + x3 + - x4 + x5 + - x6 + x7 + - x8 + x9 + - x10 + x11 + - x12 + x13 + - x14 + x15 + - x16 + 42)
 # """
 
-interp = interp_Pwhile.InterpPwhile()
+interp = interp_Ltup.InterpLtup()
 # interp = interp_Pvar.InterpPvar()
 
 p = parse(prog)
@@ -182,16 +186,16 @@ p = parse(prog)
 print("\n======= AST of the original program")
 print(p)
 
-type_check_Pwhile.TypeCheckPwhile().type_check_P(p)
+type_check_Ltup.TypeCheckLtup().type_check(p)
 print("\n======= type check passes")
 
 print("\n======= interpreting original program")
-interp.interp_P(p)
+interp.interp(p)
 
 print("\n======= interpreting RCOed program")
 compiler = Compiler()
 p_rcoed = compiler.remove_complex_operands(p)
-interp.interp_P(p_rcoed)
+interp.interp(p_rcoed)
 
 print("\n======= printing RCOed program")
 print(p_rcoed)
@@ -202,8 +206,8 @@ p_exped = compiler.explicate_control(p_rcoed)
 print(p_exped)
 
 print("\n======= interpreting EXPed program")
-cif_interp = interp_Cif.InterpCif()
-cif_interp.interp_C(p_exped)
+cif_interp = interp_Ctup.InterpCtup()
+cif_interp.interp(p_exped)
 
 print("\n======= selecting instructions")
 p_x64 = compiler.select_instructions(p_exped)
