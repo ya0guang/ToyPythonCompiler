@@ -15,7 +15,7 @@ import interp_Ctup
 from interp_x86 import eval_x86
 
 prog = """
-a = (1, 2, 3)
+(42, )[0]
 """
 
 # prog ="""
