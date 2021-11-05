@@ -14,24 +14,28 @@ import interp_Ctup
 # import interp_Pwhile
 from interp_x86 import eval_x86
 
-prog ="""
-x = input_int()
-y = input_int()
-if ((True if x == y else True) if (True if False else x != y) else False):
-  u = x < y
-  v = x < y
-  w = x > y
-  z = x >= y
-else:
-  u = True
-  v = True
-  w = True
-  z = True
-pyc_temp_var_0 = (v if u else False)
-pyc_temp_var_1 = (x - y if not pyc_temp_var_0 else 0)
-print(pyc_temp_var_1)
-  
+prog = """
+a = (1, 2, 3)
 """
+
+# prog ="""
+# x = input_int()
+# y = input_int()
+# if ((True if x == y else True) if (True if False else x != y) else False):
+#   u = x < y
+#   v = x < y
+#   w = x > y
+#   z = x >= y
+# else:
+#   u = True
+#   v = True
+#   w = True
+#   z = True
+# pyc_temp_var_0 = (v if u else False)
+# pyc_temp_var_1 = (x - y if not pyc_temp_var_0 else 0)
+# print(pyc_temp_var_1)
+# """
+
 # prog = """
 # while False:
 #   input_int()

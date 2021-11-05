@@ -8,10 +8,11 @@ from priority_queue import *
 import os
 import types
 from functools import *
-from typing import List, Tuple, Set, Dict
+from typing import List, Set, Dict
+import typing
 
 # Type notes
-Binding = Tuple[Name, expr]
+Binding = typing.Tuple[Name, expr]
 Temporaries = List[Binding]
 
 # Global register categorization
@@ -59,6 +60,7 @@ def analyze_dataflow(G: DirectedAdjList, transfer: FunctionType, bottom, join: F
 class Compiler:
 
     temp_count: int = 0
+    tup_temp_count: int = 0
     # used for tracking static stack usage
     stack_count: int = 0
 
@@ -117,8 +119,31 @@ class Compiler:
     # Expose Allocation
     ############################################################################    
     
-    def expose_allication(self, t: Tuple) -> Begin:
+    def expose_allocation(self, t: Tuple) -> Begin:
         """convert a tuple creation into a begin"""
+        assert(isinstance(t, Tuple))
+        content = t.elts
+        body = []
+
+        for i in range(len(content)):
+            temp_name = 'temp_tup' + str(self.tup_temp_count) + 'X' + str(i)
+            body.append(Assign([Name(temp_name)], content[i]))
+
+        tup_bytes = (len(content) + 1) * 8
+        
+        #TODO: may need constant(tup_bytes)
+        if_exp = Compare(BinOp(GlobalValue('free_ptr'), Add(), Constant(tup_bytes)), [Lt()], [GlobalValue('fromspace_end')])
+        body.append(If(if_exp, [Expr(Constant(0))], [Collect(tup_bytes)]))
+
+        var = Name("pyc_temp_tup_" + str(self.tup_temp_count))
+        body.append(Assign([var], Allocate(len(content), t.has_type)))
+
+        for i in range(len(content)):
+            body.append(Assign([Subscript(var, Constant(i), Store())], Name('temp_tup' + str(self.tup_temp_count) + 'X' + str(i))))
+
+        self.tup_temp_count += 1
+        return Begin(body, var)
+
 
     ############################################################################
     # Remove Complex Operands
@@ -142,7 +167,7 @@ class Compiler:
             tail = Let(var[0], var[1], tail)
         return tail
 
-    def rco_exp(self, e: expr, need_atomic: bool) -> Tuple[expr, Temporaries]:
+    def rco_exp(self, e: expr, need_atomic: bool) -> typing.Tuple[expr, Temporaries]:
 
         temps = []
         # tail must be assigned in the match cases
@@ -158,8 +183,12 @@ class Compiler:
             case BoolOp(Or(), args):
                 return self.rco_exp(IfExp(args[0], Constant(True), args[1]), need_atomic)
             # call expose_allocation for tuple creation
-            case Tuple(elts):
-                
+            case Tuple(_, Load()):
+                #TODO: may need to consider temps and bindings
+                return self.rco_exp(self.expose_allocation(e), need_atomic)
+            case Begin(body, result):
+                #TODO
+                tail = e
             case UnaryOp(uniop, exp):
                 # `Not()` and `USub`
                 if Compiler.is_atm(exp):
