@@ -114,6 +114,13 @@ class Compiler:
             color_from += 1
 
     ############################################################################
+    # Expose Allocation
+    ############################################################################    
+    
+    def expose_allication(self, t: Tuple) -> Begin:
+        """convert a tuple creation into a begin"""
+
+    ############################################################################
     # Remove Complex Operands
     ############################################################################
 
@@ -150,6 +157,9 @@ class Compiler:
                 return self.rco_exp(IfExp(args[0], args[1], Constant(False)), need_atomic)
             case BoolOp(Or(), args):
                 return self.rco_exp(IfExp(args[0], Constant(True), args[1]), need_atomic)
+            # call expose_allocation for tuple creation
+            case Tuple(elts):
+                
             case UnaryOp(uniop, exp):
                 # `Not()` and `USub`
                 if Compiler.is_atm(exp):
@@ -223,8 +233,6 @@ class Compiler:
                 else_rcoed = [new_stat for s in stmts_else for new_stat in self.rco_stmt(s)]
                 tail = If(exp_rcoed, body_rcoed, else_rcoed)
             case While(exp, stmts_body, []):
-                # TODO: special treatment for while loop
-                # TODO: letize exp
                 exp_rcoed = self.letize(exp)
                 # (exp_rcoed, temps) = self.rco_exp(exp, False)
                 body_rcoed = [new_stat for s in stmts_body for new_stat in self.rco_stmt(s)]
