@@ -15,7 +15,8 @@ import interp_Ctup
 from interp_x86 import eval_x86
 
 prog = """
-(42, )[0]
+a = (42,)
+print(1)
 """
 
 # prog ="""
@@ -208,6 +209,10 @@ print("\n======= explicate control")
 print("\n======= printing EXPed program")
 p_exped = compiler.explicate_control(p_rcoed)
 print(p_exped)
+
+print("\n======= type checking EXPed program")
+type_check_Ctup.TypeCheckCtup().type_check(p_exped)
+
 
 print("\n======= interpreting EXPed program")
 cif_interp = interp_Ctup.InterpCtup()

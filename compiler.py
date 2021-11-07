@@ -135,8 +135,8 @@ class Compiler:
         tup_bytes = (len(content) + 1) * 8
         
         #TODO: may need constant(tup_bytes)
-        if_exp = Compare(BinOp(GlobalValue('free_ptr'), Add(), Constant(tup_bytes)), [Lt()], [GlobalValue('fromspace_end')])
-        body.append(If(if_exp, [Expr(Constant(0))], [Collect(tup_bytes)]))
+        if_cond = Compare(BinOp(GlobalValue('free_ptr'), Add(), Constant(tup_bytes)), [Lt()], [GlobalValue('fromspace_end')])
+        body.append(If(if_cond, [Expr(Constant(0))], [Collect(tup_bytes)]))
 
         var = Name("pyc_temp_tup_" + str(self.tup_temp_count))
         body.append(Assign([var], Allocate(len(content), t.has_type)))
@@ -149,7 +149,6 @@ class Compiler:
 
         self.tup_temp_count += 1
         return Begin(body, var)
-
 
     ############################################################################
     # Remove Complex Operands
@@ -344,22 +343,27 @@ class Compiler:
             case Let(var, rhs, body):
                 ...
             case _:
+                print("DEBUG: hit explicate_effect wild")
                 return cont
-
 
     def explicate_assign(self, rhs: expr, lhs: Name, cont: List[stmt]) -> List[stmt]:
         match rhs:
             case IfExp(test, body, orelse):
                 # dispatch to `explicate_pred`
                 # `cont` must not be empty
-
                 trampoline = self.create_block(cont)
                 body_ss = self.explicate_assign(body, lhs, [trampoline])
                 orelse_ss = self.explicate_assign(orelse, lhs, [trampoline])
                 return self.explicate_pred(test, body_ss, orelse_ss)
             case Let(var, let_rhs, let_body):
                 return [Assign([var], let_rhs)] + self.explicate_assign(let_body, lhs, []) + force(cont)
+            case Begin(body, result):
+                new_cont = [Assign([lhs], result)] + force(cont)
+                body_ss = self.explicate_stmts(body, new_cont)
+                return body_ss
+                # return body_ss + [Assign([lhs], result)] + force(cont)
             case _:
+                print("DEBUG: hit explicate_assign wild ", rhs)
                 return [Assign([lhs], rhs)] + force(cont)
     
     def explicate_pred(self, cnd: expr, thn: List[stmt], els: List[stmt]):
@@ -372,6 +376,10 @@ class Compiler:
                 return thn
             case Constant(False):
                 return els
+            case Subscript(tup, idx, Load()):
+                var = Name("pyc_temp_var_" + str(self.temp_count))
+                self.temp_count += 1
+                return [Assign([var], cnd)] + self.explicate_pred(var, thn, els)
             case UnaryOp(Not(), operand):
                 # return [If(UnaryOp(Not(), operand),
                 #     [Goto(self.create_block(thn))],
@@ -399,6 +407,7 @@ class Compiler:
                 # return [Assign([var], let_rhs)] + self.explicate_pred(body, thn, els)
                 return [Assign([var], let_rhs)] + force(tail)
             case _:
+                print("DEBUG: hit explicate_pred wild")
                 return [If(Compare(cnd, [Eq()], [Constant(False)]),
                     [self.create_block(els)],
                     [self.create_block(thn)])]
@@ -423,6 +432,11 @@ class Compiler:
                 # update loop block to have the if condition
                 self.create_block_no_lazy(cnd_exped, loopBlock.label)
                 return [loopBlock]
+            case Collect(_):
+                print("DEBUG: HIT Collect")
+                return [s] + force(cont)
+            case _:
+                print("DEBUG: hit explicate_stmt wild")
 
         return cont
     

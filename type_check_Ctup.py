@@ -9,9 +9,6 @@ class TypeCheckCtup(TypeCheckCwhile):
     match e:
         case Allocate(length, typ):
           return typ
-        case Begin(ss, e):
-          self.type_check_stmts(ss, env)
-          return self.type_check_exp(e, env)
         case GlobalValue(name):
           return int
         case Subscript(tup, Constant(index), Load()):
@@ -19,6 +16,15 @@ class TypeCheckCtup(TypeCheckCwhile):
           match tup_t:
             case TupleType(ts):
               return ts[index]
+            case Bottom():
+              return Bottom()
+            case _:
+              raise Exception('error, expected a tuple, not ' + repr(tup_t))
+        case Call(Name('len'), [tup]):
+          tup_t = self.type_check_atm(tup, env)
+          match tup_t:
+            case TupleType(ts):
+              return int
             case Bottom():
               return Bottom()
             case _:
