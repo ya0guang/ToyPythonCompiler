@@ -530,6 +530,7 @@ class Compiler:
                 match idx:
                     case Constant(i):
                         reg = 8*(i+1)
+                instrs.append(Instr('movq', [self.select_arg(tup), Reg('r11')]))
                 instrs.append(Instr('movq', [Deref('r11',(reg)), Reg('r11')]))
                 instrs.append(Instr('movq', [Reg('r11'), Variable("Unnamed_Pyc_Var")]))
                 #TODO
@@ -538,19 +539,32 @@ class Compiler:
                 pass
             case Allocate(len, type):
                 binary = bin(len)
+                print(binary)
                 
                 print("LENGTH")
                 print(len)
-                len = len << 2
-
-                print("LENGTH SHIFTED")
-                print(len)
+                tag = len <<1
+                tag = tag|1
+                ptrMask = 0
+                #TODO properly implement getting of ag
+                #match on type
+                #When we have a tuple it is a 1 in the pointer mask
+                match type:
+                    #case <class Tuple>: #what is the tuple type? what am I looking for here?
+                    #    ptrMask = ptrMask + 1
+                    #    ptrMask = ptrMask << 1
+                        #1 on the pointer mask
+                    case _:
+                        ptrMask = ptrMask << 1
+                        #0 on the pointer mask
+                print("POINTER MASK")
+                print(ptrMask)
+                print(tag)
+                print(bin(tag))
                 instrs.append(Instr('movq', [Deref('rip', 'free_ptr'), Reg('r11')]))
                 instrs.append(Instr('addq', [Immediate(8*(len + 1)), Deref('rip', 'free_ptr')]))
-                instrs.append(Instr('movq', [Immediate(3), Deref('r11', 0)]))
+                instrs.append(Instr('movq', [Immediate(tag), Deref('r11', 0)]))
                 instrs.append(Instr('movq', [Reg('r11'), Variable("Unnamed_Pyc_Var")]))
-                #USE TAG INSTEAD OF 3
-                #how do you compute tag? 
             case GlobalValue(var):
                 instrs.append(Instr('movq', [Global(var), Variable("Unnamed_Pyc_Var")]))
                 #instrs.append(Global(var))      
@@ -609,7 +623,7 @@ class Compiler:
             case Assign([Name(var)], exp):
                 instrs += bound_unamed(self.select_expr(exp), var)
             case Assign([Subscript(tup,idx,Store())],exp):
-                #TODO I think this works
+                #TODO done
                 instrs.append(Instr('movq', [self.select_arg(tup), Reg('r11')]))
                 match idx:
                     case Constant(i):
@@ -621,6 +635,7 @@ class Compiler:
                 instrs.append(Instr('movq', [Reg('r15'),Reg('rdi')]))
                 instrs.append(Instr('movq', [Immediate(bytes), Reg('rsi')]))
                 instrs.append(Callq('collect',2))
+                #how many args? 2?
                 
             case _:
                 raise Exception('error in select_stmt, unhandled ' + repr(s))
