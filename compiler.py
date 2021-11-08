@@ -236,6 +236,9 @@ class Compiler:
                 temps = test_temps
             case Call(Name('input_int'), []):
                 tail = e
+            case Call(Name('len')):
+                #TODO not sure if more needs to be done
+                tail = e
             case GlobalValue(v):
                 #TODO: create a temp to hold it
                 tail = e
@@ -522,7 +525,35 @@ class Compiler:
                 instrs.append(
                     Instr('movq', [self.select_arg(atm1), Variable("Unnamed_Pyc_Var")]))
                 instrs.append(
-                    Instr('subq', [self.select_arg(atm2), Variable("Unnamed_Pyc_Var")]))            
+                    Instr('subq', [self.select_arg(atm2), Variable("Unnamed_Pyc_Var")]))    
+            case Subscript(tup, idx, Load()):
+                match idx:
+                    case Constant(i):
+                        reg = 8*(i+1)
+                instrs.append(Instr('movq', [Deref('r11',(reg)), Reg('r11')]))
+                instrs.append(Instr('movq', [Reg('r11'), Variable("Unnamed_Pyc_Var")]))
+                #TODO
+            case Call(Name('len'),[exp]):
+                #TODO get length based on tag?
+                pass
+            case Allocate(len, type):
+                binary = bin(len)
+                
+                print("LENGTH")
+                print(len)
+                len = len << 2
+
+                print("LENGTH SHIFTED")
+                print(len)
+                instrs.append(Instr('movq', [Deref('rip', 'free_ptr'), Reg('r11')]))
+                instrs.append(Instr('addq', [Immediate(8*(len + 1)), Deref('rip', 'free_ptr')]))
+                instrs.append(Instr('movq', [Immediate(3), Deref('r11', 0)]))
+                instrs.append(Instr('movq', [Reg('r11'), Variable("Unnamed_Pyc_Var")]))
+                #USE TAG INSTEAD OF 3
+                #how do you compute tag? 
+            case GlobalValue(var):
+                instrs.append(Instr('movq', [Global(var), Variable("Unnamed_Pyc_Var")]))
+                #instrs.append(Global(var))      
             case _:
                 instrs.append(
                     Instr('movq', [self.select_arg(e), Variable("Unnamed_Pyc_Var")]))
@@ -577,6 +608,20 @@ class Compiler:
                 instrs += self.select_expr(exp)
             case Assign([Name(var)], exp):
                 instrs += bound_unamed(self.select_expr(exp), var)
+            case Assign([Subscript(tup,idx,Store())],exp):
+                #TODO I think this works
+                instrs.append(Instr('movq', [self.select_arg(tup), Reg('r11')]))
+                match idx:
+                    case Constant(i):
+                        reg = 8*(i+1)
+                instrs.append(Instr('movq', [self.select_arg(exp), Deref('r11', (reg))]))
+                #movq exp, 8(idx + 1)(%r11)
+            case Collect(bytes):
+                #TODO done
+                instrs.append(Instr('movq', [Reg('r15'),Reg('rdi')]))
+                instrs.append(Instr('movq', [Immediate(bytes), Reg('rsi')]))
+                instrs.append(Callq('collect',2))
+                
             case _:
                 raise Exception('error in select_stmt, unhandled ' + repr(s))
 
