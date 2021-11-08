@@ -339,7 +339,7 @@ class Compiler:
             case IfExp(test, body, orelse):
                 return self.explicate_pred(test, body, orelse) + cont
             case Call(func, args):
-                return [Expr(e)] + cont
+                return [Expr(e)] + force(cont)
             case Let(var, rhs, body):
                 ...
             case _:
