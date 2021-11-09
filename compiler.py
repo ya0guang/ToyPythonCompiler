@@ -494,6 +494,35 @@ class Compiler:
     def select_expr(self, e: expr) -> List[instr]:
         # TODO: binary Sub
         # pretending the variable will always be assigned
+        
+        def generate_tag(length: int, ts: List) -> int:
+            #TODO: complete this function
+            """a helper function to generate the 64-bit tag based on the length of tuple and types"""
+            # 1 bit to indicate forwarding (0) or not (1). If 0, then the header is the forwarding pointer.
+            # 6 bits to store the length of the tuple (max of 50)
+            # 50 bits for the pointer mask to indicate which elements of the tuple are pointers.
+            tag = 0
+            assert(isinstance(ts, TupleType))
+            ts = ts.types
+            assert(length == len(ts))
+            for i in range(length):
+                print("DEBUG: ts[i]: ", ts[i], "type: ", type(ts[i]), "equal?: ", ts[i] is Tuple)
+                # if ts[i] is int:
+                #     print("DEBUG: hit int")
+                # if ts[i] is Tuple:
+                #     # Do something to tag here
+                #     print("DEBUG: hit Tuple")
+                #     pass
+                match ts[i]:
+                    case TupleType(nest_ts):
+                        # Do something to tag here
+                        print("DEBUG: hit Tuple")
+                    case _:
+                        print("DEBUG: type ignored for now")
+                        pass
+
+            return tag
+
         instrs = []
         match e:
             case Call(Name('input_int'), []):
@@ -537,19 +566,22 @@ class Compiler:
             case Call(Name('len'),[exp]):
                 #TODO get length based on tag?
                 pass
-            case Allocate(len, type):
-                binary = bin(len)
+            case Allocate(length, ts):
+                tag = generate_tag(length, ts)
+                # debug
+                binary = bin(length)
                 print(binary)
                 
                 print("LENGTH")
                 print(len)
-                tag = len <<1
+                tag = length <<1
                 tag = tag|1
                 ptrMask = 0
+                # /debug
                 #TODO properly implement getting of ag
                 #match on type
                 #When we have a tuple it is a 1 in the pointer mask
-                match type:
+                match ts:
                     #case <class Tuple>: #what is the tuple type? what am I looking for here?
                     #    ptrMask = ptrMask + 1
                     #    ptrMask = ptrMask << 1
