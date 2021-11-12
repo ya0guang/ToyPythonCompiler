@@ -15,9 +15,8 @@ import interp_Ctup
 from interp_x86 import eval_x86
 
 prog = """
-t = (32, 42, 12, 32, 23, 23, 12, 12,)
-print(len(t))
-"""
+
+t1 = (1,(44,))
 
 # prog ="""
 # x = input_int()

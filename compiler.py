@@ -510,6 +510,7 @@ class Compiler:
             ptrMsk = 0
             for i in range(length):
                 #print("DEBUG: ts[i]: ", ts[i], "type: ", type(ts[i]), "equal?: ", ts[i] is Tuple)
+
                 # if ts[i] is int:
                 #     print("DEBUG: hit int")
                 # if ts[i] is Tuple:
@@ -528,6 +529,7 @@ class Compiler:
             ptrMsk = ptrMsk << 6 #check this
             tag = ptrMsk | tag
             #print(bin(tag))
+
             return tag
 
         instrs = []
