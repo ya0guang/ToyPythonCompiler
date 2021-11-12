@@ -44,4 +44,4 @@ if __name__ == "__main__":
   pr = Expr(Call(Name('print'), [t1_at_0]))
   p = Module([pr])
   TypeCheckLtup().type_check(p)
-    
+

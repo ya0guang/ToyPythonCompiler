@@ -505,8 +505,12 @@ class Compiler:
             assert(isinstance(ts, TupleType))
             ts = ts.types
             assert(length == len(ts))
+            tag = length << 1
+            tag = tag|1
+            ptrMsk = 0
             for i in range(length):
-                print("DEBUG: ts[i]: ", ts[i], "type: ", type(ts[i]), "equal?: ", ts[i] is Tuple)
+                #print("DEBUG: ts[i]: ", ts[i], "type: ", type(ts[i]), "equal?: ", ts[i] is Tuple)
+
                 # if ts[i] is int:
                 #     print("DEBUG: hit int")
                 # if ts[i] is Tuple:
@@ -516,10 +520,15 @@ class Compiler:
                 match ts[i]:
                     case TupleType(nest_ts):
                         # Do something to tag here
-                        print("DEBUG: hit Tuple")
+                        #ptrMsk = ptrMsk + 1
+                        ptrMsk = ptrMsk << 1
+                        #print("DEBUG: hit Tuple")
                     case _:
-                        print("DEBUG: type ignored for now")
-                        pass
+                        #print("DEBUG: type ignored for now")
+                        ptrMsk = ptrMsk << 1
+            ptrMsk = ptrMsk << 6 #check this
+            tag = ptrMsk | tag
+            #print(bin(tag))
 
             return tag
 
@@ -565,36 +574,44 @@ class Compiler:
                 #TODO
             case Call(Name('len'),[exp]):
                 #TODO get length based on tag?
-                pass
+                instrs.append(Instr('movq', [exp, Reg('rax')]))
+                instrs.append(Instr('movq', [Deref('rax', 0), Reg('rax')]))
+                instrs.append(Instr('andq', [Immediate(126), Reg('rax')]))#gets just the length part of the tag
+                instrs.append(Instr('sarq', [Immediate(1), Reg('rax')])) #shift right one
+                instrs.append(Instr('movq', [Reg('rax'), Variable("Unnamed_Pyc_Var")]))
+                
+                print(exp)
             case Allocate(length, ts):
                 tag = generate_tag(length, ts)
                 # debug
-                binary = bin(length)
-                print(binary)
+                #binary = bin(length)
+                #print(binary)
                 
-                print("LENGTH")
-                print(len)
-                tag = length <<1
-                tag = tag|1
-                ptrMask = 0
+                #print("LENGTH")
+                #print(len)
+                #tag = length <<1
+                #tag = tag|1
+                #ptrMask = 0
                 # /debug
                 #TODO properly implement getting of ag
                 #match on type
                 #When we have a tuple it is a 1 in the pointer mask
-                match ts:
+                #match ts:
                     #case <class Tuple>: #what is the tuple type? what am I looking for here?
                     #    ptrMask = ptrMask + 1
                     #    ptrMask = ptrMask << 1
                         #1 on the pointer mask
-                    case _:
-                        ptrMask = ptrMask << 1
+                #    case _:
+                #       ptrMask = ptrMask << 1
                         #0 on the pointer mask
-                print("POINTER MASK")
-                print(ptrMask)
-                print(tag)
-                print(bin(tag))
-                instrs.append(Instr('movq', [Deref('rip', 'free_ptr'), Reg('r11')]))
-                instrs.append(Instr('addq', [Immediate(8*(len + 1)), Deref('rip', 'free_ptr')]))
+                #print("POINTER MASK")
+                #print(ptrMask)
+                #print("LENGTH THEN TAG")
+                #print(length)
+                #print(tag)
+                #print(bin(tag))
+                instrs.append(Instr('movq', [Global('free_ptr'), Reg('r11')]))
+                instrs.append(Instr('addq', [Immediate(8*(length + 1)), Global('free_ptr')]))
                 instrs.append(Instr('movq', [Immediate(tag), Deref('r11', 0)]))
                 instrs.append(Instr('movq', [Reg('r11'), Variable("Unnamed_Pyc_Var")]))
             case GlobalValue(var):
