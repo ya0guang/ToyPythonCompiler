@@ -1070,6 +1070,7 @@ class Compiler:
     ############################################################################
     # Patch Instructions
     ############################################################################
+    # TODO: Patch Instructions is not modified for tuples, may subject to change
 
     def patch_instr(self, i: instr) -> List[instr]:
         patched_instrs = []
@@ -1147,6 +1148,7 @@ class Compiler:
             
         self.used_callee = list(self.used_callee)
         stack_frame_size = align()
+        shadow_stack_size = self.shadow_stack_count * 8
 
         prelude = []
         prelude.append(Instr('pushq', [Reg('rbp')]))
@@ -1155,9 +1157,17 @@ class Compiler:
             prelude.append(Instr('pushq', [r]))
         # TODO: ignore this when sub 0
         prelude.append(Instr('subq', [Immediate(stack_frame_size), Reg('rsp')]))
+        # shadow stack handling
+        prelude.append(Instr('movq', [Immediate(16384), Reg('rdi')]))
+        prelude.append(Instr('movq', [Immediate(16384), Reg('rsi')]))
+        prelude.append(Callq('initialize', 2))
+        prelude.append(Instr('movq', [Global('rootstack_begin'), Reg('r15')]))
+        prelude.append(Instr('movq', [Immediate(0), Deref('r15', 0)])) # "movq $0, $0(%r15)" = "movq $0, (%r15)"
+        prelude.append(Instr('addq', [Immediate(shadow_stack_size), Reg('r15')]))
         prelude.append((Jump('start')))
 
         conclusion = []
+        conclusion.append(Instr('subq', [Immediate(shadow_stack_size), Reg('r15')]))
         conclusion.append(Instr('addq', [Immediate(stack_frame_size), Reg('rsp')]))
         for r in reversed(self.used_callee):
             conclusion.append(Instr('popq', [r]))

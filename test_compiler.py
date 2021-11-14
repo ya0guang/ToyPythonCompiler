@@ -16,6 +16,7 @@ from interp_x86 import eval_x86
 
 prog = """
 t1 = (1, (2, ), 3)
+print(t1[2])
 # prog ="""
 # x = input_int()
 # y = input_int()
@@ -246,8 +247,8 @@ print("\n======= assigning homes")
 p_x64_reg = compiler.assign_homes(p_x64)
 print(p_x64_reg)
 
-print("\n======= evaluating x86 program")
-eval_x86.interp_x86(p_x64_reg)
+# print("\n======= evaluating x86 program")
+# eval_x86.interp_x86(p_x64_reg)
 
 print("\n======= patching instructions")
 p_x64_patched = compiler.patch_instructions(p_x64_reg)
@@ -257,6 +258,6 @@ print("\n======= geenrating prelude and conclusion")
 p_x64_final = compiler.prelude_and_conclusion(p_x64_patched)
 print(p_x64_final)
 
-print("\n======= evaluating x86 program")
-eval_x86.interp_x86(p_x64_final)
+# print("\n======= evaluating x86 program")
+# eval_x86.interp_x86(p_x64_final)
 
