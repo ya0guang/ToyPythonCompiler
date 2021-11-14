@@ -5,6 +5,7 @@ __pycache__
 *.s
 *.out
 *.o
+*.asm
 
 # temp files for test purpose
 temp*

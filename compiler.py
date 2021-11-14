@@ -22,11 +22,15 @@ arg_passing = ['rdi', 'rsi', 'rdx', 'rcx', 'r8', 'r9', ]
 caller_saved = arg_passing + ['rax', 'r10', 'r11']
 callee_saved = ['rsp', 'rbp', 'rbx', 'r12', 'r13', 'r14', 'r15']
 
-# Allocatable registers = all - rsp - rbp - rax
+# Allocatable registers = all - rsp - rbp - rax - r11 - r15
 allocatable = callee_saved + caller_saved
+
+# TODO: use a list: reserved_regs = ['rsp', 'rbp', 'rbx', 'rax', 'r11', 'r15']
 allocatable.remove('rsp')
 allocatable.remove('rbp')
 allocatable.remove('rax')
+allocatable.remove('r11')
+allocatable.remove('r15')
 
 def force(promise):
     if isinstance(promise, types.FunctionType):
@@ -61,8 +65,10 @@ class Compiler:
 
     temp_count: int = 0
     tup_temp_count: int = 0
+
     # used for tracking static stack usage
-    stack_count: int = 0
+    normal_stack_count: int = 0
+    shadow_stack_count: int = 0
 
     # `calllq`: include first `arg_num` registers in its read-set R
     arg_passing = [Reg(x) for x in arg_passing]
@@ -92,7 +98,7 @@ class Compiler:
         self.live_after_set_dict = {}
         # this list can be changed for testing spilling
         self.allocatable = [Reg(x) for x in allocatable]
-        all_reg = [Reg('rsp'), Reg('rbp'), Reg('rax')] + self.allocatable
+        all_reg = [Reg('r11'), Reg('r15'), Reg('rsp'), Reg('rbp'), Reg('rax')] + self.allocatable
         self.int_graph = UndirectedAdjList()
         self.move_graph = UndirectedAdjList()
         self.control_flow_graph = DirectedAdjList()
@@ -109,8 +115,9 @@ class Compiler:
         self.sorted_control_flow_graph = []
         self.used_callee = set()
 
+        # Reserved registers
         self.color_reg_map = {}
-        color_from = -3
+        color_from = -5
         for reg in all_reg:
             self.color_reg_map[color_from] = reg
             color_from += 1
@@ -520,7 +527,7 @@ class Compiler:
                 match ts[i]:
                     case TupleType(nest_ts):
                         # Do something to tag here
-                        #ptrMsk = ptrMsk + 1
+                        ptrMsk = ptrMsk + 1
                         ptrMsk = ptrMsk << 1
                         #print("DEBUG: hit Tuple")
                     case _:
@@ -567,9 +574,9 @@ class Compiler:
             case Subscript(tup, idx, Load()):
                 match idx:
                     case Constant(i):
-                        reg = 8*(i+1)
+                        offset = 8 * (i + 1)
                 instrs.append(Instr('movq', [self.select_arg(tup), Reg('r11')]))
-                instrs.append(Instr('movq', [Deref('r11',(reg)), Reg('r11')]))
+                instrs.append(Instr('movq', [Deref('r11',(offset)), Reg('r11')]))
                 instrs.append(Instr('movq', [Reg('r11'), Variable("Unnamed_Pyc_Var")]))
                 #TODO
             case Call(Name('len'),[exp]):
@@ -611,7 +618,7 @@ class Compiler:
                 #print(tag)
                 #print(bin(tag))
                 instrs.append(Instr('movq', [Global('free_ptr'), Reg('r11')]))
-                instrs.append(Instr('addq', [Immediate(8*(length + 1)), Global('free_ptr')]))
+                instrs.append(Instr('addq', [Immediate(8 * (length + 1)), Global('free_ptr')]))
                 instrs.append(Instr('movq', [Immediate(tag), Deref('r11', 0)]))
                 instrs.append(Instr('movq', [Reg('r11'), Variable("Unnamed_Pyc_Var")]))
             case GlobalValue(var):
@@ -889,14 +896,24 @@ class Compiler:
     ############################################################################
 
     def color_graph(self, graph: UndirectedAdjList) -> Dict[location, int]:
-
-        # TODO: move biasing
+        """use negative numbers to represent reserved registers
+        use positive number to represent allocatable reg/stack spills
+        use imaginary number to represent shadow stack"""
 
         saturation_dict = {}
         assign_dict = {}
 
         def less(x: location, y: location):
             return len(saturation_dict[x.key]) < len(saturation_dict[y.key])
+
+        def shadow_or_stack(v: Variable):
+            assert(isinstance(v, Variable))
+            if v.id.startswith('pyc_temp_tup') or v.id.startswith('temp_tup'):
+                # goes to shadow stack
+                return (0+1j, 0+1j)
+            else:
+                # goes to stack
+                return (0, 1)
 
         # initialize saturation_dict
         for v in graph.vertices():
@@ -907,6 +924,7 @@ class Compiler:
             if isinstance(v, Reg):
                 # find key for the register in `allocation` dict
                 for index, reg in self.color_reg_map.items():
+                    # TODO: correct? extended_reg is not used
                     extended_reg = Compiler.extend_reg(reg)
                     # print("DEBUG: v:,", v, " reg: ", reg)
                     if reg == v:
@@ -923,8 +941,8 @@ class Compiler:
 
         for _ in range(len(saturation_dict)):
             v = pq.pop()
-            # skip register vertices, since they've been assigned a home
-            if isinstance(v, Reg):
+            # skip register vertices or already assigned vars, since they've been assigned a home
+            if isinstance(v, Reg) or isinstance(v, Global) or isinstance(v, Deref):
                 continue
             v_saturation = saturation_dict[v]
             colored = False
@@ -940,14 +958,17 @@ class Compiler:
                         assign_dict[v] = assign_dict[candidate]
                         colored = True
 
-            color = 0
+            # color = 0
+            (color, step) = shadow_or_stack(v)
+
             # if not going into biased move
+            print("DEBUG in color_graph: v, ", v)
             while not colored:
                 if color not in v_saturation:
                     assign_dict[v] = color
                     colored = True
                 else:
-                    color += 1
+                    color += step
 
             for adjacent in graph.adjacent(v):
                 saturation_dict[adjacent].add(assign_dict[v])
@@ -991,15 +1012,35 @@ class Compiler:
 
     def map_colors(self, coloring: Dict[location, int]) -> Dict[location, arg]:
         """return a dict mapping colors to registers or stack locations"""
+
+        #TODO: record how much shadow stack and stack space is used here
         allocatable_reg_num = len(self.allocatable)
         result = {}
+
+        shadow_stack = {}
+        normal_stack = {}
+        
+        # seprate the shadow stack and normal stack
         for vertex, color in coloring.items():
+            if isinstance(color, int):
+                normal_stack[vertex] = color
+            if isinstance(color, complex):
+                shadow_stack[vertex] = color
+
+        for vertex, color in normal_stack.items():
             if color < allocatable_reg_num:
                 result[vertex] = self.color_reg_map[color]
             else:
                 result[vertex] = Deref(
                     "rbp", - (color - allocatable_reg_num + 1) * 8)
-                self.stack_count += 1
+                self.normal_stack_count += 1
+        
+        for vertex, color in shadow_stack.items():
+            # spill all
+            offset = int(color.imag - 1)
+            result[vertex] = Deref(
+                    "r15", - (offset + 1) * 8)
+            self.shadow_stack_count += 1
 
         return result
 
@@ -1099,7 +1140,7 @@ class Compiler:
     def prelude_and_conclusion(self, p: X86Program) -> X86Program:
 
         def align():
-            alignment = 8 * (len(self.used_callee) + self.stack_count) # current alignment
+            alignment = 8 * (len(self.used_callee) + self.normal_stack_count) # current alignment
             if (alignment % 16) != 0:
                 alignment += 8
             return alignment - (8 * len(self.used_callee)) 

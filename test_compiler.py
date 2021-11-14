@@ -15,9 +15,7 @@ import interp_Ctup
 from interp_x86 import eval_x86
 
 prog = """
-
-t1 = (1,(44,))
-
+t1 = (1, (2, ), 3)
 # prog ="""
 # x = input_int()
 # y = input_int()
@@ -221,8 +219,8 @@ print("\n======= selecting instructions")
 p_x64 = compiler.select_instructions(p_exped)
 print(p_x64)
 
-print("\n======= evaluating x86 program")
-eval_x86.interp_x86(p_x64)
+# print("\n======= evaluating x86 program")
+# eval_x86.interp_x86(p_x64)
 
 print("\n======= uncovering live after sets")
 las = compiler.uncover_live(p_x64)
