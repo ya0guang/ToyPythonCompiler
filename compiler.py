@@ -69,6 +69,7 @@ class Compiler:
     # used for tracking static stack usage
     normal_stack_count: int = 0
     shadow_stack_count: int = 0
+    tuple_vars = []
 
     # `calllq`: include first `arg_num` registers in its read-set R
     arg_passing = [Reg(x) for x in arg_passing]
@@ -280,6 +281,10 @@ class Compiler:
                 (exp_rcoed, temps) = self.rco_exp(exp, False)
                 tail = Expr(exp_rcoed)
             case Assign([Name(var)], exp):
+                # Record all tuples here
+                if isinstance(exp, Tuple):
+                    print("DEBUG: hit tuple, ", var, type(var))
+                    self.tuple_vars.append(var)
                 (exp_rcoed, temps) = self.rco_exp(exp, False)
                 tail = Assign([Name(var)], exp_rcoed)
             case If(exp, stmts_body, stmts_else):
@@ -306,6 +311,7 @@ class Compiler:
                 raise Exception('error in rco_stmt, stmt not supported ' + repr(s))
 
         for binding in temps:
+            print("DEBUG, binding: ", binding)
             result.append(Assign([binding[0]], binding[1]))
 
         result.append(tail)
@@ -580,8 +586,9 @@ class Compiler:
                 instrs.append(Instr('movq', [Reg('r11'), Variable("Unnamed_Pyc_Var")]))
                 #TODO
             case Call(Name('len'),[exp]):
+                # print("DEBUG: exp: ", exp, type(exp))
                 #TODO get length based on tag?
-                instrs.append(Instr('movq', [exp, Reg('rax')]))
+                instrs.append(Instr('movq', [self.select_arg(exp), Reg('rax')]))
                 instrs.append(Instr('movq', [Deref('rax', 0), Reg('rax')]))
                 instrs.append(Instr('andq', [Immediate(126), Reg('rax')]))#gets just the length part of the tag
                 instrs.append(Instr('sarq', [Immediate(1), Reg('rax')])) #shift right one
@@ -710,7 +717,7 @@ class Compiler:
                 return X86Program(x86_blks)
             case _:
                 raise Exception(
-                        'error in read_write_sets, select_instructions' + repr(p))
+                        'error in select_instructions, ' + repr(p))
 
     ############################################################################
     # Liveness after set generation
@@ -753,6 +760,10 @@ class Compiler:
                 case Instr("movzbq", [src, dest]):
                     # TODO: remove hardcode to %al
                     (read_set, write_set) = ([Reg('rax')], extract_locations([dest]))
+                case Instr("sarq", [Immediate(_), arg]):
+                    (read_set, write_set) = (extract_locations([arg]), extract_locations([arg]))
+                case Instr("andq", [arg1, arg2]):
+                    (read_set, write_set) = (extract_locations([arg1, arg2]), extract_locations([arg2]))
                 case Instr(ins, [arg]) if len(ins) >= 3 and ins[:3] == 'set':
                     # TODO: match each sub instructions of `set`, maybe in an elegant way?
                     (read_set, write_set) = ({}, extract_locations([Reg('rax')]))
@@ -853,7 +864,7 @@ class Compiler:
                         self.int_graph.add_vertex(loc)
                         if not (loc == src or loc == dest):
                             self.int_graph.add_edge(loc, dest)
-                # TODO: make movzbq and set<cc> more general
+                # TODO: make movzbq more general
                 case Instr("movzbq", [_, dest]):
                     for loc in las:
                         self.int_graph.add_vertex(loc)
@@ -865,11 +876,15 @@ class Compiler:
                     for loc in las:
                         self.int_graph.add_vertex(loc)
                         self.int_graph.add_edge(loc, Reg("rax"))
-                case Instr(binop, [_, arg]) if binop in ['addq', 'subq']:
+                case Instr(binop, [_, arg]) if binop in ['addq', 'subq', 'andq', 'orq']:
                     for loc in las:
                         if not loc == arg:
                             self.int_graph.add_edge(loc, arg)
                 case Instr("negq", [arg]):
+                    for loc in las:
+                        if not loc == arg:
+                            self.int_graph.add_edge(loc, arg)
+                case Instr("sarq", [Immediate(_), arg]): # similar to negq
                     for loc in las:
                         if not loc == arg:
                             self.int_graph.add_edge(loc, arg)
@@ -908,7 +923,7 @@ class Compiler:
 
         def shadow_or_stack(v: Variable):
             assert(isinstance(v, Variable))
-            if v.id.startswith('pyc_temp_tup') or v.id.startswith('temp_tup'):
+            if v.id.startswith('pyc_temp_tup') or v.id.startswith('temp_tup') or (v.id in self.tuple_vars):
                 # goes to shadow stack
                 return (0+1j, 0+1j)
             else:
@@ -1064,6 +1079,7 @@ class Compiler:
                 self.used_callee.add(r)
         
         home = self.map_colors(coloring)
+        print("DEBUG: home: ", home)
 
         return X86Program(self.assign_homes_instrs(p.body, home))
 
