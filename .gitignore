@@ -1,3 +1,6 @@
+# IDE
+.vscode/
+
 # Python intermediate
 __pycache__
 
