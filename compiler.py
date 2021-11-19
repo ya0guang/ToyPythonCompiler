@@ -62,6 +62,35 @@ def analyze_dataflow(G: DirectedAdjList, transfer: FunctionType, bottom, join: F
 
     return mapping
 
+
+class Compiler:
+    """compile the whole program, and for each function, call methods in `CompileFunction`"""
+
+    def __init__(self, filename: str):
+        self.functions = {}
+
+    def shrink(self, p: Module) -> Module:
+        pass
+
+    def remove_complex_operands(self, p: Module) -> Module:
+        pass
+
+    def explicate_control(self, p: Module) -> CProgram:
+        pass
+
+    def select_instructions(self, p: CProgram) -> X86Program:
+        pass
+
+    def assign_homes(self, p: X86Program) -> X86Program:
+        pass
+
+    def patch_instructions(self, p: X86Program) -> X86Program:
+        pass
+
+    def prelude_and_conclusion(self, p: X86Program) -> X86Program:
+        pass
+
+
 class CompileFunction:
     """compile a single function"""
 
