@@ -66,11 +66,28 @@ def analyze_dataflow(G: DirectedAdjList, transfer: FunctionType, bottom, join: F
 class Compiler:
     """compile the whole program, and for each function, call methods in `CompileFunction`"""
 
-    def __init__(self, filename: str):
+    def __init__(self):
         self.functions = {}
 
     def shrink(self, p: Module) -> Module:
-        pass
+        # TODO: convert to FunRef
+        assert(isinstance(p, Module))
+        main_args = arguments([], [], [], [] ,[])
+        main = FunctionDef('main', args = main_args, body = [], decorator_list = [], returns = int)
+
+        new_module = []
+        for c in p.body:
+            match c:
+                case FunctionDef(_name, _args, _body, _deco_list, _rv_type):
+                    new_module.append(c)
+                    # print("DEBUG, function: ", name, "args: ", args.args, body, _deco_list, _rv_type)
+                case stmt():
+                    main.body.append(c)
+
+        main.body.append(Return(Constant(0)))
+        new_module.append(main)
+        print("DEBUG, new module: ", new_module)
+        return Module(new_module)
 
     def remove_complex_operands(self, p: Module) -> Module:
         pass

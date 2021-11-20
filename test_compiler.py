@@ -1,22 +1,23 @@
 from ast import *
 from compiler import *
 from utils import repr_Module
-# import type_check_Lfun
-# import type_check_Cfun
-# import interp_Lfun
-# import interp_Cfun
+import type_check_Lfun
+import type_check_Cfun
+import interp_Lfun
+import interp_Cfun
 
-import type_check_Ltup
-import type_check_Ctup
-import interp_Ltup
-import interp_Ctup
-# import interp_Pvar
-# import interp_Pwhile
 from interp_x86 import eval_x86
 
 prog = """
-t = (38,2,)
-print(len(t))
+
+def add(x: int, y: int) -> int:
+    return x + y
+
+print(add(1, 2))
+
+"""
+
+
 # prog ="""
 # x = input_int()
 # y = input_int()
@@ -181,7 +182,7 @@ print(len(t))
 # print(x1 + - x2 + x3 + - x4 + x5 + - x6 + x7 + - x8 + x9 + - x10 + x11 + - x12 + x13 + - x14 + x15 + - x16 + 42)
 # """
 
-interp = interp_Ltup.InterpLtup()
+interp = interp_Lfun.InterpLfun()
 # interp = interp_Pvar.InterpPvar()
 
 p = parse(prog)
@@ -189,15 +190,22 @@ p = parse(prog)
 print("\n======= AST of the original program")
 print(p)
 
-type_check_Ltup.TypeCheckLtup().type_check(p)
+type_check_Lfun.TypeCheckLfun().type_check(p)
 print("\n======= type check passes")
 
-print("\n======= interpreting original program")
-interp.interp(p)
+# print("\n======= interpreting original program")
+# interp.interp(p)
+
+compiler = Compiler()
+
+print("\n======= shrinked program")
+p_shrinked = compiler.shrink(p)
+print(p_shrinked)
+print("\n======= interpreting shrinked program")
+interp.interp(p_shrinked)
 
 print("\n======= interpreting RCOed program")
-compiler = Compiler()
-p_rcoed = compiler.remove_complex_operands(p)
+p_rcoed = compiler.remove_complex_operands(p_shrinked)
 interp.interp(p_rcoed)
 
 print("\n======= printing RCOed program")
@@ -209,11 +217,11 @@ p_exped = compiler.explicate_control(p_rcoed)
 print(p_exped)
 
 print("\n======= type checking EXPed program")
-type_check_Ctup.TypeCheckCtup().type_check(p_exped)
+type_check_Cfun.TypeCheckCfun().type_check(p_exped)
 
 
 print("\n======= interpreting EXPed program")
-cif_interp = interp_Ctup.InterpCtup()
+cif_interp = interp_Cfun.InterpCfun()
 cif_interp.interp(p_exped)
 
 print("\n======= selecting instructions")
