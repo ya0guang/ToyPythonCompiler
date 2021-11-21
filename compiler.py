@@ -67,7 +67,7 @@ class Compiler:
     """compile the whole program, and for each function, call methods in `CompileFunction`"""
 
     def __init__(self):
-        self.functions = {}
+        self.functions = []
 
     def shrink(self, p: Module) -> Module:
         # TODO: convert to FunRef
@@ -78,8 +78,9 @@ class Compiler:
         new_module = []
         for c in p.body:
             match c:
-                case FunctionDef(_name, _args, _body, _deco_list, _rv_type):
+                case FunctionDef(name, _args, _body, _deco_list, _rv_type):
                     new_module.append(c)
+                    self.functions.append(name)
                     # print("DEBUG, function: ", name, "args: ", args.args, body, _deco_list, _rv_type)
                 case stmt():
                     main.body.append(c)
@@ -88,6 +89,27 @@ class Compiler:
         new_module.append(main)
         print("DEBUG, new module: ", new_module)
         return Module(new_module)
+
+    def reveal_functions(self, p: Module) -> Module:
+        """change `Name(f)` to `FunRef(f)` for functions defined in the module"""
+
+        class RevealFunction(NodeTransformer):
+            
+            def visit(self, node, c: Compiler):
+                match node:
+                    case Call(Name(f), args) if f in c.functions:
+                        # what if f is a builtin function? guard needed
+                        return Call(FunRef(f), args)
+                    case _:
+                        return node 
+
+        assert(isinstance(p, Module))
+        for f in p.body:
+            for s in f.body:
+                for n in ast.walk(s):
+                    print("DEBUG, node: ", ast.dump(n))
+                    n = RevealFunction().visit(n, self)
+                    print("DEBUG, new node: ", ast.dump(n))
 
     def remove_complex_operands(self, p: Module) -> Module:
         pass

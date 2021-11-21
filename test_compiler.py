@@ -204,6 +204,12 @@ print(p_shrinked)
 print("\n======= interpreting shrinked program")
 interp.interp(p_shrinked)
 
+print("\n======= reveal functions")
+p_revealed = compiler.reveal_functions(p_shrinked)
+print(p_revealed)
+print("\n======= interpreting revealed functions program")
+interp.interp(p_revealed)
+
 print("\n======= interpreting RCOed program")
 p_rcoed = compiler.remove_complex_operands(p_shrinked)
 interp.interp(p_rcoed)
