@@ -68,9 +68,12 @@ class Compiler:
 
     def __init__(self):
         self.functions = []
+        # function -> CompileFunction instance
+        self.function_compilers = {}
+        # function -> {original_name: new_name}
+        self.function_limit_renames = {}
 
     def shrink(self, p: Module) -> Module:
-        # TODO: convert to FunRef
         assert(isinstance(p, Module))
         main_args = arguments([], [], [], [] ,[])
         main = FunctionDef('main', args = main_args, body = [], decorator_list = [], returns = int)
@@ -95,26 +98,108 @@ class Compiler:
 
         class RevealFunction(NodeTransformer):
             
-            def visit(self, node, c: Compiler):
+            def __init__(self, outer: Compiler):
+                self.outer_instance = outer
+                super().__init__()
+
+            def visit_Call(self, node):
+                self.generic_visit(node)
                 match node:
-                    case Call(Name(f), args) if f in c.functions:
+                    case Call(Name(f), args) if f in self.outer_instance.functions:
                         # what if f is a builtin function? guard needed
                         return Call(FunRef(f), args)
                     case _:
                         return node 
 
         assert(isinstance(p, Module))
+        # Why this does't work?
+        # new_body = RevealFunction(self).visit_Call(p)
+        # p.body = new_body
+
         for f in p.body:
+            new_body = []
             for s in f.body:
-                for n in ast.walk(s):
-                    print("DEBUG, node: ", ast.dump(n))
-                    n = RevealFunction().visit(n, self)
-                    print("DEBUG, new node: ", ast.dump(n))
+                new_line = RevealFunction(self).visit_Call(s)
+                new_body.append(new_line)
+                    # print("DEBUG, new node: ", ast.dump(n))
+            f.body = new_body
+        
+        return p
+
+    def limit_functions(self, p: Module) -> Module:
+        
+        class LimitFunction(NodeTransformer):
+            
+            def __init__(self, outer: Compiler, mapping: dict = {}):
+                self.outer_instance = outer
+                self.mapping = mapping
+                super().__init__()
+
+            def visit_Name(self, node):
+                # substitute the >5th arguments with subscript of a tuple
+                self.generic_visit(node)
+                match node:
+                    case Name(n) if n in self.mapping.keys():
+                        return self.mapping[n]
+                    case _:
+                        return node
+            
+            def visit_Call(self, node):
+                self.generic_visit(node)
+                match node:
+                    case Call(FunRef(f), args) if len(args) > 6:
+                        # print("DEBUG, HIT in visit_FunRef: ", ast.dump(node))
+                        new_args = args[:5]
+                        new_args.append(Tuple(args[5:], Load()))
+                        return Call(FunRef(f), new_args)
+                    case _:
+                        return node
+
+        assert(isinstance(p, Module))
+        # limit defines
+        for f in p.body:
+            match f:
+                case FunctionDef(_name, args, _body, _deco_list, _rv_type) if isinstance(args, arguments) and len(args.args) > 6:
+                    print("DEBUG, args: ", ast,dump(args.args[0]))
+                    new_args = args.args[:5]
+                    arg_tup = ast.arg('tup_arg', TupleType([ty.annotation for ty in args.args[5:]]))
+                    alias_mapping = {}
+                    for i in range(5, len(args.args)):
+                        # TODO: How is this allocated on the heap or appears in shadow stack?
+                        # print("DEBUG, dump arg[i]: ", ast.dump(args.args[i]))
+                        alias_mapping[args.args[i].arg] = Subscript(Name('tup_arg'), Constant(i - 5), Load())
+                    # print("DEBUG, alias_mapping: ", alias_mapping)
+                    new_args.append(arg_tup)
+                    f.args.args = new_args
+                    new_body = []
+                    for s in f.body:
+                        new_line = LimitFunction(self, alias_mapping).visit_Name(s)
+                        new_body.append(new_line)
+                    f.body = new_body
+                case _:
+                    assert(isinstance(f, FunctionDef))
+                    new_body = []
+                    for s in f.body:
+                        new_line = LimitFunction(self).visit_Call(s)
+                        new_body.append(new_line)
+                    f.body = new_body
+        
+        # limit call sites & convert name
+        return p
 
     def remove_complex_operands(self, p: Module) -> Module:
-        pass
+        assert(isinstance(p, Module))
+        for f in p.body:
+            assert(isinstance(f, FunctionDef))
+            self.function_compilers = {}
+            self.function_compilers[f.name] = CompileFunction(f.name)
+            f.body = self.function_compilers[f.name].remove_complex_operands(Module(f.body))
+        return p
 
     def explicate_control(self, p: Module) -> CProgram:
+        # assert(isinstance(p, Module))
+        # for f in p.body:
+        #     self.function_compilers[f].explicate_control(f.body)
         pass
 
     def select_instructions(self, p: CProgram) -> X86Program:
@@ -160,7 +245,8 @@ class CompileFunction:
                 raise Exception(
                     'error in extend_reg, unsupported register name ' + repr(r))
 
-    def __init__(self):
+    def __init__(self, name: str):
+        self.name = name
         self.basic_blocks = {}
         # mappings from a single instruction to a set
         self.read_set_dict = {}
@@ -418,7 +504,7 @@ class CompileFunction:
                 return Goto(l)
             case _:
                 if not label:
-                    label = label_name(generate_name('block'))
+                    label = label_name(generate_name('block' + self.name))
                 self.basic_blocks[label] = stmts
                 return Goto(label)
 
@@ -1042,6 +1128,7 @@ class CompileFunction:
 
         def shadow_or_stack(v: Variable):
             assert(isinstance(v, Variable))
+            # How to check it's really a tup?
             if v.id.startswith('pyc_temp_tup') or v.id.startswith('temp_tup') or (v.id in self.tuple_vars):
                 # goes to shadow stack
                 return (0+1j, 0+1j)

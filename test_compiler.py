@@ -10,10 +10,10 @@ from interp_x86 import eval_x86
 
 prog = """
 
-def add(x: int, y: int) -> int:
-    return x + y
+def sum(a:int,b:int,c:int,d:int,e:int,f:int,g:int,h:int)-> int :
+    return a + b + c + d + e + f + g + h
 
-print(add(1, 2))
+print(sum(5, 5, 5, 5, 5, 5, 5, 7))
 
 """
 
@@ -207,15 +207,35 @@ interp.interp(p_shrinked)
 print("\n======= reveal functions")
 p_revealed = compiler.reveal_functions(p_shrinked)
 print(p_revealed)
+
+print("\n======= reveal functions AST")
+print(ast.dump(p_revealed))
+
 print("\n======= interpreting revealed functions program")
 interp.interp(p_revealed)
 
-print("\n======= interpreting RCOed program")
-p_rcoed = compiler.remove_complex_operands(p_shrinked)
-interp.interp(p_rcoed)
+print("\n======= limit functions")
+p_limited = compiler.limit_functions(p_revealed)
+print(p_limited)
+
+print("\n======= limit functions AST")
+print(ast.dump(p_limited))
+
+print("\n======= interpreting limit functions program")
+interp.interp(p_limited)
+
+
+p_rcoed = compiler.remove_complex_operands(p_limited)
+
+print("\n======= RCOed program AST")
+print(ast.dump(p_rcoed))
 
 print("\n======= printing RCOed program")
 print(p_rcoed)
+
+print("\n======= interpreting RCOed program")
+interp.interp(p_rcoed)
+
 
 print("\n======= explicate control")
 print("\n======= printing EXPed program")
