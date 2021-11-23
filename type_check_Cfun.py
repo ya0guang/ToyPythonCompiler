@@ -1,37 +1,33 @@
 from ast import *
 from utils import *
-from type_check_Ctup import check_type_equal, TypeCheckCtup
+from type_check_Ctup import TypeCheckCtup
 import copy
 
 class TypeCheckCfun(TypeCheckCtup):
-    
-  # def parse_type_annot(self, annot):
-  #     match annot:
-  #       case Name(id):
-  #         if id == 'int':
-  #           return int
-  #         elif id == 'bool':
-  #           return bool
-  #         else:
-  #           raise Exception('parse_type_annot: unexpected ' + repr(annot))
-  #       case TupleType(ts):
-  #         return TupleType([self.parse_type_annot(t) for t in ts])
-  #       case FunctionType(ps, rt):
-  #         return FunctionType([self.parse_type_annot(t) for t in ps],
-  #                             self.parse_type_annot(rt))
-  #       case Subscript(Name('Callable'), Tuple([ps, rt])):
-  #         return FunctionType([self.parse_type_annot(t) for t in ps.elts],
-  #                             self.parse_type_annot(rt))
-  #       case Subscript(Name('tuple'), Tuple(ts)):
-  #         return TupleType([self.parse_type_annot(t) for t in ts])
-  #       case _:
-  #           raise Exception('parse_type_annot: unexpected ' + repr(annot))
-    
+
+  def check_type_equal(self, t1, t2, e):
+    if t1 == Bottom() or t2 == Bottom():
+      return
+    match t1:
+      case FunctionType(ps1, rt1):
+        match t2:
+          case FunctionType(ps2, rt2):
+            for (p1,p2) in zip(ps1, ps2):
+              self.check_type_equal(p1, p2, e)
+              self.check_type_equal(rt1, rt2, e)
+          case _:
+            raise Exception('error: ' + repr(t1) + ' != ' + repr(t2) \
+                            + ' in ' + repr(e))
+      case _:
+        super().check_type_equal(t1, t2, e)
+  
   def type_check_exp(self, e, env):
     match e:
       case FunRef(id):
         return env[id]
       case Call(Name('input_int'), []):
+        return super().type_check_exp(e, env)      
+      case Call(Name('len'), [tup]):
         return super().type_check_exp(e, env)      
       case Call(func, args):
         func_t = self.type_check_exp(func, env)
@@ -39,7 +35,7 @@ class TypeCheckCfun(TypeCheckCtup):
         match func_t:
           case FunctionType(params_t, return_t):
             for (arg_t, param_t) in zip(args_t, params_t):
-                check_type_equal(param_t, arg_t, e)
+                self.check_type_equal(param_t, arg_t, e)
             return return_t
           case Bottom():
             return Bottom()
@@ -68,14 +64,14 @@ class TypeCheckCfun(TypeCheckCtup):
       case _:
         raise Exception('type_check_def: unexpected ' + repr(d))
 
-  def type_check_stmts(self, ss, env):
-    if len(ss) == 0:
-      return
-    match ss[0]:
+  def type_check_stmt(self, s, env):
+    match s:
       case Return(value):
-        return self.type_check_exp(value, env)
+        self.type_check_exp(value, env)
+      case TailCall(func, args):
+        self.type_check_exp(Call(func, args), env)
       case _:
-        return super().type_check_stmts(ss, env)
+        super().type_check_stmt(s, env)
     
   def type_check(self, p):
     match p:
