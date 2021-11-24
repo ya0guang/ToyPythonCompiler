@@ -173,6 +173,7 @@ class Compiler:
                     f.args.args = new_args
                     new_body = []
                     for s in f.body:
+                        # new_line is new node
                         new_line = LimitFunction(self, alias_mapping).visit_Name(s)
                         new_body.append(new_line)
                     f.body = new_body
@@ -292,7 +293,7 @@ class CompileFunction:
         body = []
 
         for i in range(len(content)):
-            if not Compiler.is_atm(content[i]):
+            if not CompileFunction.is_atm(content[i]):
                 print("DEBUG: ???")
                 temp_name = 'temp_tup' + \
                     str(self.tup_temp_count) + 'X' + str(i)
@@ -309,7 +310,7 @@ class CompileFunction:
         body.append(Assign([var], Allocate(len(content), t.has_type)))
 
         for i in range(len(content)):
-            if not Compiler.is_atm(content[i]):
+            if not CompileFunction.is_atm(content[i]):
                 body.append(Assign([Subscript(var, Constant(i), Store())], Name(
                     'temp_tup' + str(self.tup_temp_count) + 'X' + str(i))))
             else:
@@ -345,7 +346,7 @@ class CompileFunction:
 
         temps = []
         # tail must be assigned in the match cases
-        if Compiler.is_atm(e):
+        if CompileFunction.is_atm(e):
             """nothing need to do if it's already an `atm`"""
             return (e, temps)
 
@@ -367,19 +368,19 @@ class CompileFunction:
                 tail = Begin(new_body, result)
             case UnaryOp(uniop, exp):
                 # `Not()` and `USub`
-                if Compiler.is_atm(exp):
+                if CompileFunction.is_atm(exp):
                     tail = e
                 else:
                     (atm, temps) = self.rco_exp(exp, True)
                     tail = UnaryOp(uniop, atm)
             case BinOp(exp1, binop, exp2):
                 """Sub() and Add()"""
-                if Compiler.is_atm(exp1):
+                if CompileFunction.is_atm(exp1):
                     (exp1_atm, exp1_temps) = (exp1, [])
                 else:
                     (exp1_atm, exp1_temps) = self.rco_exp(exp1, True)
 
-                if Compiler.is_atm(exp2):
+                if CompileFunction.is_atm(exp2):
                     (exp2_atm, exp2_temps) = (exp2, [])
                 else:
                     (exp2_atm, exp2_temps) = self.rco_exp(exp2, True)
@@ -388,12 +389,12 @@ class CompileFunction:
                 temps = exp1_temps + exp2_temps
             case Compare(left, [cmp], [right]):
                 # similar to `BinOp` case
-                if Compiler.is_atm(left):
+                if CompileFunction.is_atm(left):
                     (left_atm, left_temps) = (left, [])
                 else:
                     (left_atm, left_temps) = self.rco_exp(left, True)
 
-                if Compiler.is_atm(right):
+                if CompileFunction.is_atm(right):
                     (right_atm, right_temps) = (right, [])
                 else:
                     (right_atm, right_temps) = self.rco_exp(right, True)
@@ -421,6 +422,18 @@ class CompileFunction:
                 (idx_rcoed, idx_temps) = self.rco_exp(idx, True)
                 tail = Subscript(var_rcoed, idx_rcoed, Load())
                 temps = var_temps + idx_temps
+            case Call(funRef, args):
+                (funRef_rcoed, funRef_temps) = self.rco_exp(funRef, True)
+                args_rcoed = []
+                args_temps = []
+                for arg in args: # make sure all args are atomic
+                    (arg_rcoed, arg_temps) = self.rco_exp(arg, True)
+                    args_rcoed.append(arg_rcoed)
+                    args_temps += arg_temps
+                tail = Call(funRef_rcoed, args_rcoed)
+                temps = args_temps + funRef_temps
+            case FunRef(f):
+                tail = e
             case _:
                 raise Exception(
                     'error in rco_exp, unsupported expression ' + repr(e))
@@ -474,23 +487,26 @@ class CompileFunction:
                 tail = Assign(
                     [Subscript(var_rcoed, idx_rcoed, Store())], exp_rcoed)
                 temps = var_temps + idx_temps + exp_temps
+            case Return(exp):
+                (atm, temps) = self.rco_exp(exp, True)
+                tail = Return(atm)
             case _:
                 raise Exception(
                     'error in rco_stmt, stmt not supported ' + repr(s))
 
         for binding in temps:
-            print("DEBUG, binding: ", binding)
+            # print("DEBUG, binding: ", binding)
             result.append(Assign([binding[0]], binding[1]))
 
         result.append(tail)
         return result
 
-    def remove_complex_operands(self, p: Module) -> Module:
+    def remove_complex_operands(self, p: Module) -> List:
         match p:
             case Module(stmts):
                 new_stmts = [
                     new_stat for s in stmts for new_stat in self.rco_stmt(s)]
-                return Module(new_stmts)
+                return new_stmts
 
     ############################################################################
     # Explicate Control
