@@ -224,6 +224,7 @@ print(ast.dump(p_limited))
 print("\n======= interpreting limit functions program")
 interp.interp(p_limited)
 
+type_check_Lfun.TypeCheckLfun().type_check(p_limited)
 
 p_rcoed = compiler.remove_complex_operands(p_limited)
 

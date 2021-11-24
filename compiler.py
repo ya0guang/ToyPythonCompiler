@@ -155,27 +155,39 @@ class Compiler:
                     case _:
                         return node
 
+        def args_need_limit(args):
+            if isinstance(args, list):
+                print("DEBUG, args: ", args, type(args))
+                # print("DEBUG, argsAST: ", args[1][0])
+                return len(args) > 6
+            else:
+                print("DEBUG, args: ", ast.dump(args))
+            return False
+
         assert(isinstance(p, Module))
         # limit defines
         for f in p.body:
             match f:
-                case FunctionDef(_name, args, _body, _deco_list, _rv_type) if isinstance(args, arguments) and len(args.args) > 6:
-                    print("DEBUG, args: ", ast,dump(args.args[0]))
-                    new_args = args.args[:5]
-                    arg_tup = ast.arg('tup_arg', TupleType([ty.annotation for ty in args.args[5:]]))
+                case FunctionDef(_name, args, _body, _deco_list, _rv_type) if args_need_limit(args):
+                    # args = args.args
+                    new_args = args[:5]
+                    arg_tup = ('tup_arg', TupleType([a[1] for a in args[5:]]))
                     alias_mapping = {}
-                    for i in range(5, len(args.args)):
+                    for i in range(5, len(args)):
                         # TODO: How is this allocated on the heap or appears in shadow stack?
                         # print("DEBUG, dump arg[i]: ", ast.dump(args.args[i]))
-                        alias_mapping[args.args[i].arg] = Subscript(Name('tup_arg'), Constant(i - 5), Load())
-                    # print("DEBUG, alias_mapping: ", alias_mapping)
+                        alias_mapping[args[i][0]] = Subscript(Name('tup_arg'), Constant(i - 5), Load())
+                    print("DEBUG, alias_mapping: ", alias_mapping)
                     new_args.append(arg_tup)
-                    f.args.args = new_args
+                    print("DEBUG, new_args: ", new_args)
+                    f.args = new_args
                     new_body = []
                     for s in f.body:
                         # new_line is new node
                         new_line = LimitFunction(self, alias_mapping).visit_Name(s)
+                        print("DEBUG, new_line: ", new_line)
                         new_body.append(new_line)
+                    print("DEBUG, new_body: ", new_body)
                     f.body = new_body
                 case _:
                     assert(isinstance(f, FunctionDef))
