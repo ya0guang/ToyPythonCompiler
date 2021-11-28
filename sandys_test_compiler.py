@@ -323,8 +323,36 @@ n = 4
 print(f(0, (id,(n,),)))
 """
 
+example_simple_function = """
+def add(x:int,y:int)-> int :
+	return x + y
+print(add(40, 2))
+"""
+
+call_in_cond = """
+def greaterThanThree(x: int) -> bool:
+    if x > 3:
+        return True
+    else:
+        return False
+
+if greaterThanThree(7):
+    print(666)
+else:
+    print(2)
+"""
+
+tail_if_fun = """
+def sum(x:int,s:int)-> int :
+    return (s if x == 0 else sum(x - 1, x + s))
+n = 7
+print(sum(n, 0) + 36)
+"""
+
 
 progs = [IfElseProg, nestedIfsProg2, whileCaseFromBook, while_while, while_from_class, simple_tuple]
+
+prog = tail_if_fun
 
 
 ############################################################################
@@ -392,8 +420,8 @@ def run1(prog):
 
 
     print("\n======= explicate control")
-    print("\n======= printing EXPed program")
     p_exped = compiler.explicate_control(p_rcoed)
+    print("\n======= printing EXPed program")
     print(p_exped)
 
     print("\n======= type checking EXPed program")
@@ -465,6 +493,6 @@ def runAll():
 # Start
 ############################################################################
 
-run1(function_with_tuple)
+run1(prog)
 # runAll()
 

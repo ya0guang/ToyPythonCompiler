@@ -208,16 +208,17 @@ class Compiler:
         assert(isinstance(p, Module))
         for f in p.body:
             assert(isinstance(f, FunctionDef))
-            self.function_compilers = {}
             self.function_compilers[f.name] = CompileFunction(f.name)
             f.body = self.function_compilers[f.name].remove_complex_operands(Module(f.body))
         return p
 
     def explicate_control(self, p: Module) -> CProgram:
-        # assert(isinstance(p, Module))
-        # for f in p.body:
-        #     self.function_compilers[f].explicate_control(f.body)
-        pass
+        match p:
+            case Module(defs):
+                for f in p.body:
+                    assert(isinstance(f, FunctionDef))
+                    f.body = self.function_compilers[f.name].explicate_control(Module(f.body))
+                return CProgramDefs(p.body)
 
     def select_instructions(self, p: CProgram) -> X86Program:
         pass
@@ -279,9 +280,9 @@ class CompileFunction:
         self.control_flow_graph = DirectedAdjList()
         self.live_before_block = {}
 
-        self.prelude_label = 'main'
+        self.prelude_label = self.name
         # assign this when iterating CFG
-        self.conclusion_label = 'conclusion'
+        self.conclusion_label = self.name + 'conclusion'
         self.basic_blocks[self.conclusion_label] = []
         # make the initial conclusion non-empty to avoid errors
         # TODO: come up with a more elegant solution, maybe from `live_before_block`
@@ -504,7 +505,7 @@ class CompileFunction:
                     [Subscript(var_rcoed, idx_rcoed, Store())], exp_rcoed)
                 temps = var_temps + idx_temps + exp_temps
             case Return(exp):
-                (atm, temps) = self.rco_exp(exp, True)
+                (atm, temps) = self.rco_exp(exp, False)
                 tail = Return(atm)
             case _:
                 raise Exception(
@@ -578,6 +579,10 @@ class CompileFunction:
                 body_ss = self.explicate_stmts(body, new_cont)
                 return body_ss
                 # return body_ss + [Assign([lhs], result)] + force(cont)
+            case Call(funRef, args):
+                return [Assign([lhs], rhs)] + force(cont)
+            case FunRef(f):
+                return [Assign([lhs], rhs)] + force(cont)
             case _:
                 print("DEBUG: hit explicate_assign wild ", rhs)
                 return [Assign([lhs], rhs)] + force(cont)
@@ -625,11 +630,31 @@ class CompileFunction:
                 # print("DEBUG: tail:", tail, "force: ", force(tail))
                 # return [Assign([var], let_rhs)] + self.explicate_pred(body, thn, els)
                 return [Assign([var], let_rhs)] + force(tail)
+            case Call(funRef, args):
+                var = Name("pyc_temp_var_" + str(self.temp_count))
+                self.temp_count += 1
+                return [Assign([var], cnd)] + self.explicate_pred(var, thn, els)
             case _:
                 print("DEBUG: hit explicate_pred wild")
                 return [If(Compare(cnd, [Eq()], [Constant(False)]),
                            [self.create_block(els)],
                            [self.create_block(thn)])]
+    
+    def explicate_tail(self, e) -> List[stmt]: # e is a return value
+        match e:
+            case IfExp(test, thn, orelse):
+                new_thn = self.explicate_tail(thn)
+                new_els = self.explicate_tail(orelse)
+                return self.explicate_pred(test, new_thn, new_els)
+            case Let(var, rhs, thn):
+                return [Assign([var], rhs)] + self.explicate_tail(thn)
+            case Begin(body, result):
+                new_cont = [Return(result)]
+                return self.explicate_stmts(body, new_cont)
+            case Call(func, args):
+                return [TailCall(func, args)]
+            case default:
+                return [Return(e)]
 
     def explicate_stmt(self, s, cont) -> List[stmt]:
         match s:
@@ -654,8 +679,10 @@ class CompileFunction:
             case Collect(_):
                 print("DEBUG: HIT Collect")
                 return [s] + force(cont)
+            case Return(exp):
+                return self.explicate_tail(exp)
             case _:
-                print("DEBUG: hit explicate_stmt wild")
+                print("DEBUG: hit explicate_stmt wild" + repr(s))
 
         return cont
 
@@ -664,15 +691,15 @@ class CompileFunction:
             cont = self.explicate_stmt(s, cont)
         return cont
 
-    def explicate_control(self, p: Module) -> CProgram:
+    def explicate_control(self, p: Module) -> Dict:
         cont = [Return(Constant(0))]
-        label = label_name('start')
+        label = label_name(self.name + 'start')
         match p:
             case Module(body):
                 new_body = self.explicate_stmts(body, cont)
                 self.create_block_no_lazy(new_body, label=label)
                 # print("DEBUG: .start: ", self.basic_blocks[label])
-                return CProgram(self.basic_blocks)
+                return self.basic_blocks
 
     ############################################################################
     # Select Instructions
