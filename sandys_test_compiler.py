@@ -323,8 +323,36 @@ n = 4
 print(f(0, (id,(n,),)))
 """
 
+example_simple_function = """
+def add(x:int,y:int)-> int :
+	return x + y
+print(add(40, 2))
+"""
+
+call_in_cond = """
+def greaterThanThree(x: int) -> bool:
+    if x > 3:
+        return True
+    else:
+        return False
+
+if greaterThanThree(7):
+    print(666)
+else:
+    print(2)
+"""
+
+tail_if_fun = """
+def sum(x:int,s:int)-> int :
+    return (s if x == 0 else sum(x - 1, x + s))
+n = 7
+print(sum(n, 0) + 36)
+"""
+
 
 progs = [IfElseProg, nestedIfsProg2, whileCaseFromBook, while_while, while_from_class, simple_tuple]
+
+prog = example_simple_function
 
 
 ############################################################################
@@ -392,8 +420,8 @@ def run1(prog):
 
 
     print("\n======= explicate control")
-    print("\n======= printing EXPed program")
     p_exped = compiler.explicate_control(p_rcoed)
+    print("\n======= printing EXPed program")
     print(p_exped)
 
     print("\n======= type checking EXPed program")
@@ -411,25 +439,25 @@ def run1(prog):
     # print("\n======= evaluating x86 program")
     # eval_x86.interp_x86(p_x64)
 
-    print("\n======= uncovering live after sets")
-    las = compiler.uncover_live(p_x64)
-    for (label, block) in p_x64.body.items():
-        print(label)
-        for s in block:
-            print(repr(s) + '\t' + str(las[s]))
+    # print("\n======= uncovering live after sets")
+    # las = compiler.uncover_live(p_x64)
+    # for (label, block) in p_x64.body.items():
+    #     print(label)
+    #     for s in block:
+    #         print(repr(s) + '\t' + str(las[s]))
 
-    print("\n======= building interference graph")
-    las_dict = compiler.uncover_live(p_x64)
-    rv = compiler.build_interference(las_dict)
-    print(compiler.int_graph.show())
+    # print("\n======= building interference graph")
+    # las_dict = compiler.uncover_live(p_x64)
+    # rv = compiler.build_interference(las_dict)
+    # print(compiler.int_graph.show())
 
-    print("\n======= building move graph")
-    rv = compiler.build_move_graph(p_x64.body)
-    print(compiler.move_graph.show())
+    # print("\n======= building move graph")
+    # rv = compiler.build_move_graph(p_x64.body)
+    # print(compiler.move_graph.show())
 
-    print("\n======= graph coloring")
-    coloring = compiler.color_graph(compiler.int_graph)
-    print(coloring)
+    # print("\n======= graph coloring")
+    # coloring = compiler.color_graph(compiler.int_graph)
+    # print(coloring)
 
     print("\n======= assigning homes")
     p_x64_reg = compiler.assign_homes(p_x64)
@@ -465,6 +493,6 @@ def runAll():
 # Start
 ############################################################################
 
-run1(function_with_tuple)
+run1(prog)
 # runAll()
 
