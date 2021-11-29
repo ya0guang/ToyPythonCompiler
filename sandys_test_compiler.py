@@ -352,7 +352,7 @@ print(sum(n, 0) + 36)
 
 progs = [IfElseProg, nestedIfsProg2, whileCaseFromBook, while_while, while_from_class, simple_tuple]
 
-prog = tail_if_fun
+prog = example_simple_function
 
 
 ############################################################################
@@ -439,25 +439,25 @@ def run1(prog):
     # print("\n======= evaluating x86 program")
     # eval_x86.interp_x86(p_x64)
 
-    print("\n======= uncovering live after sets")
-    las = compiler.uncover_live(p_x64)
-    for (label, block) in p_x64.body.items():
-        print(label)
-        for s in block:
-            print(repr(s) + '\t' + str(las[s]))
+    # print("\n======= uncovering live after sets")
+    # las = compiler.uncover_live(p_x64)
+    # for (label, block) in p_x64.body.items():
+    #     print(label)
+    #     for s in block:
+    #         print(repr(s) + '\t' + str(las[s]))
 
-    print("\n======= building interference graph")
-    las_dict = compiler.uncover_live(p_x64)
-    rv = compiler.build_interference(las_dict)
-    print(compiler.int_graph.show())
+    # print("\n======= building interference graph")
+    # las_dict = compiler.uncover_live(p_x64)
+    # rv = compiler.build_interference(las_dict)
+    # print(compiler.int_graph.show())
 
-    print("\n======= building move graph")
-    rv = compiler.build_move_graph(p_x64.body)
-    print(compiler.move_graph.show())
+    # print("\n======= building move graph")
+    # rv = compiler.build_move_graph(p_x64.body)
+    # print(compiler.move_graph.show())
 
-    print("\n======= graph coloring")
-    coloring = compiler.color_graph(compiler.int_graph)
-    print(coloring)
+    # print("\n======= graph coloring")
+    # coloring = compiler.color_graph(compiler.int_graph)
+    # print(coloring)
 
     print("\n======= assigning homes")
     p_x64_reg = compiler.assign_homes(p_x64)

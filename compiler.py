@@ -158,11 +158,11 @@ class Compiler:
 
         def args_need_limit(args):
             if isinstance(args, list):
-                print("DEBUG, args: ", args, type(args))
+                # print("DEBUG, args: ", args, type(args))
                 # print("DEBUG, argsAST: ", args[1][0])
                 return len(args) > 6
-            else:
-                print("DEBUG, args: ", ast.dump(args))
+            # else:
+                # print("DEBUG, args: ", ast.dump(args))
             return False
 
         assert(isinstance(p, Module))
@@ -212,7 +212,7 @@ class Compiler:
             f.body = self.function_compilers[f.name].remove_complex_operands(Module(f.body))
         return p
 
-    def explicate_control(self, p: Module) -> CProgram:
+    def explicate_control(self, p: Module) -> CProgramDefs:
         match p:
             case Module(defs):
                 for f in p.body:
@@ -220,10 +220,63 @@ class Compiler:
                     f.body = self.function_compilers[f.name].explicate_control(Module(f.body))
                 return CProgramDefs(p.body)
 
-    def select_instructions(self, p: CProgram) -> X86Program:
-        pass
+    def select_instructions(self, p: CProgramDefs) -> X86ProgramDefs:
+        assert(isinstance(p, CProgramDefs))
+        for f in p.defs:
+            assert(isinstance(f, FunctionDef))
+            #select instructions
+            f.body = self.function_compilers[f.name].select_instructions(CProgram(f.body))
+            new_start_block = []
+            i = 0
+            # add instr to move each register into arg in at the beginning of the block
+            for arg in f.args:
+                match arg[0]:
+                    case var if isinstance(var, str):
+                        new_start_block.append(Instr('movq', [Reg(arg_passing[i]), Variable(var)]))
+                        i += 1
+                    case Default:
+                        print("DEBUG in selecting ARG: " + str(type(arg[0])))
+            # fix the block
+            new_start_block += f.body[f.name + "start"]
+            f.body[f.name + "start"] = new_start_block
+            # fix function definition
+            f.args = []
+            f.returns = int
+            # match f:
+            #     case FunctionDef(name, args, blocks, _deco_list, _rv_type):
+            #         i = 0
+            #         # add instr to move each register into arg in at the beginning of the block
+            #         for arg in args:
+            #             match arg[0]:
+            #                 case Name(var):
+            #                     new_start_block.append(Instr('movq'), [Variable(var), Reg(arg_passing[i])])
+            #                     i += 1
+            #         # fix the block
+            #         new_start_block += f.body[name + "start"]
+            #         f.body[name + "start"] = new_start_block
+            #         # fix definition
+            #         f.args = []
+            #         f.returns = int
 
-    def assign_homes(self, p: X86Program) -> X86Program:
+                    # # fix the block
+                    # new_start_block += blocks[name + "start"]
+                    # blocks[name + "start"] = new_start_block
+                    # # add new definition
+                    # new_defs.append(FunctionDef(name, [], blocks, _deco_list, int)) ##############
+                    
+            # assert(isinstance(f, FunctionDef))
+            # f.body = self.function_compilers[f.name].select_instructions(CProgram(f.body)) ########put in
+
+        return X86ProgramDefs(p.defs)
+
+    def assign_homes(self, p: X86ProgramDefs) -> X86ProgramDefs:
+        # assert(isinstance(p, X86ProgramDefs))
+        # for f in p.defs:
+        #     assert(isinstance(f, FunctionDef))
+        #     f.body = self.function_compilers[f.name].select_instructions(X86Program(f.body))
+
+        # print("finished assigning homes")
+        # return X86ProgramDefs(p.defs)
         pass
 
     def patch_instructions(self, p: X86Program) -> X86Program:
@@ -796,7 +849,7 @@ class CompileFunction:
                 instrs.append(
                     Instr('cmpq', [self.select_arg(atm2), self.select_arg(atm1)]))
                 instrs.append(
-                    Instr('set' + Compiler.condition_abbr(cmp), [Reg('al')]))
+                    Instr('set' + CompileFunction.condition_abbr(cmp), [Reg('al')]))
                 instrs.append(
                     Instr('movzbq', [Reg('al'), Variable("Unnamed_Pyc_Var")]))
             case BinOp(atm1, Add(), atm2):
@@ -842,33 +895,6 @@ class CompileFunction:
                 print(exp)
             case Allocate(length, ts):
                 tag = generate_tag(length, ts)
-                # debug
-                #binary = bin(length)
-                # print(binary)
-
-                # print("LENGTH")
-                # print(len)
-                #tag = length <<1
-                #tag = tag|1
-                #ptrMask = 0
-                # /debug
-                # TODO properly implement getting of ag
-                # match on type
-                # When we have a tuple it is a 1 in the pointer mask
-                # match ts:
-                # case <class Tuple>: #what is the tuple type? what am I looking for here?
-                #    ptrMask = ptrMask + 1
-                #    ptrMask = ptrMask << 1
-                # 1 on the pointer mask
-                #    case _:
-                #       ptrMask = ptrMask << 1
-                # 0 on the pointer mask
-                #print("POINTER MASK")
-                # print(ptrMask)
-                #print("LENGTH THEN TAG")
-                # print(length)
-                # print(tag)
-                # print(bin(tag))
                 instrs.append(Instr('movq', [Global('free_ptr'), Reg('r11')]))
                 instrs.append(
                     Instr('addq', [Immediate(8 * (length + 1)), Global('free_ptr')]))
@@ -912,7 +938,7 @@ class CompileFunction:
                     case Compare(atm1, [cmp], [atm2]):
                         instrs.append(
                             Instr('cmpq', [self.select_arg(atm2), self.select_arg(atm1)]))
-                        abbr = Compiler.condition_abbr(cmp)
+                        abbr = CompileFunction.condition_abbr(cmp)
                     case _:
                         raise Exception(
                             'error in select_expr, if: invlaid test ' + repr(test))
@@ -934,7 +960,10 @@ class CompileFunction:
             case Expr(exp):
                 instrs += self.select_expr(exp)
             case Assign([Name(var)], exp):
-                instrs += bound_unamed(self.select_expr(exp), var)
+                if isinstance(exp, FunRef):
+                    instrs.append(Instr('leaq', [exp, Variable(var)]))
+                else:
+                    instrs += bound_unamed(self.select_expr(exp), var)
             case Assign([Subscript(tup, idx, Store())], exp):
                 # TODO done
                 instrs.append(
@@ -951,13 +980,15 @@ class CompileFunction:
                 instrs.append(Instr('movq', [Immediate(bytes), Reg('rsi')]))
                 instrs.append(Callq('collect', 2))
                 # how many args? 2?
-
+            case TailCall(exp, args):
+                print("TAIL CALL")
+            # case Assign([Name(var)], FunRef)
             case _:
                 raise Exception('error in select_stmt, unhandled ' + repr(s))
 
         return instrs
 
-    def select_instructions(self, p: CProgram) -> X86Program:
+    def select_instructions(self, p: CProgram) -> Dict:
         match p:
             # case Module(stmts):
             #     insts = [inst for s in stmts for inst in self.select_stmt(s)]
@@ -967,7 +998,7 @@ class CompileFunction:
                 for (label, block) in blks.items():
                     x86_blks[label] = [
                         inst for s in block for inst in self.select_stmt(s)]
-                return X86Program(x86_blks)
+                return x86_blks
             case _:
                 raise Exception(
                     'error in select_instructions, ' + repr(p))
@@ -1031,7 +1062,7 @@ class CompileFunction:
                         {}, extract_locations([Reg('rax')]))
                 case Callq(_func_name, num_args):
                     (read_set, write_set) = (extract_locations(
-                        Compiler.arg_passing[:num_args]), extract_locations(Compiler.caller_saved))
+                        CompileFunction.arg_passing[:num_args]), extract_locations(CompileFunction.caller_saved))
                 case Instr('nop', _):
                     pass
                 case Jump(dest):
@@ -1154,7 +1185,7 @@ class CompileFunction:
                             self.int_graph.add_edge(loc, arg)
                 case Callq(_func_name, _num_args):
                     for loc in las:
-                        for dest in Compiler.caller_saved:
+                        for dest in CompileFunction.caller_saved:
                             if not dest == loc:
                                 self.int_graph.add_edge(loc, dest)
                 # trivial reads/jumps
@@ -1205,7 +1236,7 @@ class CompileFunction:
                 # find key for the register in `allocation` dict
                 for index, reg in self.color_reg_map.items():
                     # TODO: correct? extended_reg is not used
-                    extended_reg = Compiler.extend_reg(reg)
+                    extended_reg = CompileFunction.extend_reg(reg)
                     # print("DEBUG: v:,", v, " reg: ", reg)
                     if reg == v:
                         assign_dict[v] = index
@@ -1324,7 +1355,7 @@ class CompileFunction:
 
         return result
 
-    def assign_homes(self, p: X86Program) -> X86Program:
+    def assign_homes(self, p: X86Program) -> Dict:
 
         # assuming p.body is a list
         las_list = self.uncover_live(p)
@@ -1333,7 +1364,7 @@ class CompileFunction:
         coloring = self.color_graph(self.int_graph)
 
         # figure out which registers need saving
-        for r in Compiler.callee_saved[2:]:
+        for r in CompileFunction.callee_saved[2:]:
             # find the color of register
             color = None
             for index, reg in self.color_reg_map.items():
@@ -1346,7 +1377,7 @@ class CompileFunction:
         home = self.map_colors(coloring)
         print("DEBUG: home: ", home)
 
-        return X86Program(self.assign_homes_instrs(p.body, home))
+        return self.assign_homes_instrs(p.body, home)
 
     ############################################################################
     # Patch Instructions
