@@ -891,8 +891,7 @@ class CompileFunction:
                 instrs.append(Instr('sarq', [Immediate(1), Reg('rax')]))
                 instrs.append(
                     Instr('movq', [Reg('rax'), Variable("Unnamed_Pyc_Var")]))
-
-                print(exp)
+                # print(exp)
             case Allocate(length, ts):
                 tag = generate_tag(length, ts)
                 instrs.append(Instr('movq', [Global('free_ptr'), Reg('r11')]))
@@ -905,6 +904,16 @@ class CompileFunction:
                 instrs.append(
                     Instr('movq', [Global(var), Variable("Unnamed_Pyc_Var")]))
                 # instrs.append(Global(var))
+            case Call(func, args):
+                i = 0
+                for arg in args:
+                    # TODO: make sure arg coorisponds with X86 arg types
+                    # if isinstance(arg, Variable):
+                    #     print(type(arg))
+                    instrs.append(Instr('movq', [arg, arg_passing[i]]))
+                    i += 1
+                instrs.append(IndirectCallq(func, i))
+                instrs.append(Instr('movq', [Reg('rax'), Variable("Unnamed_Pyc_Var")]))
             case _:
                 instrs.append(
                     Instr('movq', [self.select_arg(e), Variable("Unnamed_Pyc_Var")]))
@@ -913,12 +922,18 @@ class CompileFunction:
 
     def select_stmt(self, s: stmt) -> List[instr]:
 
-        def bound_unamed(instrs: List[instr], var: str) -> List[instr]:
+        def bound_unamed(instrs: List[instr], var) -> List[instr]:
             new_instrs = []
             for i in instrs:
                 match i:
-                    case Instr(oprtr, args):
+                    # for variable name
+                    case Instr(oprtr, args) if isinstance(var, str):
                         new_args = [Variable(var) if a == Variable(
+                            "Unnamed_Pyc_Var") else a for a in args]
+                        new_instrs.append(Instr(oprtr, new_args))
+                    # if var is a register
+                    case Instr(oprtr, args) if isinstance(var, Reg):
+                        new_args = [var if a == Variable(
                             "Unnamed_Pyc_Var") else a for a in args]
                         new_instrs.append(Instr(oprtr, new_args))
                     case wild:
@@ -944,13 +959,6 @@ class CompileFunction:
                             'error in select_expr, if: invlaid test ' + repr(test))
                 instrs.append(JumpIf(abbr, body_label))
                 instrs.append(Jump(else_label))
-            case Return(rv):
-                instrs.append(
-                    Instr('movq', [self.select_arg(rv), Reg('rax')]))
-                instrs.append(Jump(self.conclusion_label))
-                # TODO: ret instruction
-                # instrs.append(
-                #     Instr('movq', [self.select_arg(rv), Reg('rax')]))
             case Expr(Call(Name('print'), [atm])):
                 instrs.append(
                     Instr('movq', [self.select_arg(atm), Reg('rdi')]))
@@ -960,6 +968,7 @@ class CompileFunction:
             case Expr(exp):
                 instrs += self.select_expr(exp)
             case Assign([Name(var)], exp):
+            # case Assign([Name(var)], Call):
                 if isinstance(exp, FunRef):
                     instrs.append(Instr('leaq', [exp, Variable(var)]))
                 else:
@@ -980,9 +989,24 @@ class CompileFunction:
                 instrs.append(Instr('movq', [Immediate(bytes), Reg('rsi')]))
                 instrs.append(Callq('collect', 2))
                 # how many args? 2?
-            case TailCall(exp, args):
+            case TailCall(func, args):
                 print("TAIL CALL")
-            # case Assign([Name(var)], FunRef)
+                i = 0
+                for arg in args:
+                    # TODO: make sure arg coorisponds with X86 arg types
+                    # if isinstance(arg, Variable):
+                    #     print(type(arg))
+                    instrs.append(Instr('movq', [arg, arg_passing[i]]))
+                    i += 1
+                instrs.append(TailJump(func, i))
+            case Return(exp):
+                instrs += bound_unamed(self.select_expr(exp), Reg('rax'))
+                # instrs.append(
+                #     Instr('movq', [self.select_expr(exp), Reg('rax')]))
+                instrs.append(Jump(self.conclusion_label))
+                # TODO: ret instruction
+                # instrs.append(
+                #     Instr('movq', [self.select_arg(rv), Reg('rax')]))
             case _:
                 raise Exception('error in select_stmt, unhandled ' + repr(s))
 
