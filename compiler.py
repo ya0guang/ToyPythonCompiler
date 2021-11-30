@@ -74,6 +74,7 @@ class Compiler:
         self.function_limit_renames = {}
 
     def shrink(self, p: Module) -> Module:
+        """create main function, making the module body a series of function definitions"""
         assert(isinstance(p, Module))
         main_args = arguments([], [], [], [] ,[])
         main = FunctionDef('main', args = main_args, body = [], decorator_list = [], returns = int)
@@ -127,6 +128,7 @@ class Compiler:
         return p
 
     def limit_functions(self, p: Module) -> Module:
+        """limit functions to 6 arguments, anything more gets put into a 6th tuple-type argument"""
         
         class LimitFunction(NodeTransformer):
             # limit call sites & convert name of args
@@ -242,30 +244,6 @@ class Compiler:
             # fix function definition
             f.args = []
             f.returns = int
-            # match f:
-            #     case FunctionDef(name, args, blocks, _deco_list, _rv_type):
-            #         i = 0
-            #         # add instr to move each register into arg in at the beginning of the block
-            #         for arg in args:
-            #             match arg[0]:
-            #                 case Name(var):
-            #                     new_start_block.append(Instr('movq'), [Variable(var), Reg(arg_passing[i])])
-            #                     i += 1
-            #         # fix the block
-            #         new_start_block += f.body[name + "start"]
-            #         f.body[name + "start"] = new_start_block
-            #         # fix definition
-            #         f.args = []
-            #         f.returns = int
-
-                    # # fix the block
-                    # new_start_block += blocks[name + "start"]
-                    # blocks[name + "start"] = new_start_block
-                    # # add new definition
-                    # new_defs.append(FunctionDef(name, [], blocks, _deco_list, int)) ##############
-                    
-            # assert(isinstance(f, FunctionDef))
-            # f.body = self.function_compilers[f.name].select_instructions(CProgram(f.body)) ########put in
 
         return X86ProgramDefs(p.defs)
 
@@ -280,6 +258,11 @@ class Compiler:
         pass
 
     def patch_instructions(self, p: X86Program) -> X86Program:
+        # assert(isinstance(p, X86ProgramDefs))
+        # for f in p.defs:
+        #     assert(isinstance(f, FunctionDef))
+        #     f.body = self.function_compilers[f.name].patch_instructions(X86Program(f.body))
+        # return X86ProgramDefs(p.defs)
         pass
 
     def prelude_and_conclusion(self, p: X86Program) -> X86Program:
@@ -906,14 +889,11 @@ class CompileFunction:
                 # instrs.append(Global(var))
             case Call(func, args):
                 i = 0
-                for arg in args:
-                    # TODO: make sure arg coorisponds with X86 arg types
-                    # if isinstance(arg, Variable):
-                    #     print(type(arg))
+                new_args = [self.select_arg(arg) for arg in args]
+                for arg in new_args:
                     instrs.append(Instr('movq', [arg, arg_passing[i]]))
                     i += 1
                 instrs.append(IndirectCallq(func, i))
-                instrs.append(Instr('movq', [Reg('rax'), Variable("Unnamed_Pyc_Var")]))
             case _:
                 instrs.append(
                     Instr('movq', [self.select_arg(e), Variable("Unnamed_Pyc_Var")]))
@@ -968,13 +948,14 @@ class CompileFunction:
             case Expr(exp):
                 instrs += self.select_expr(exp)
             case Assign([Name(var)], exp):
-            # case Assign([Name(var)], Call):
                 if isinstance(exp, FunRef):
                     instrs.append(Instr('leaq', [exp, Variable(var)]))
+                elif isinstance(exp, Call):
+                    instrs += self.select_expr(exp)
+                    instrs.append(Instr('movq', [Reg('rax'), Variable(var)]))
                 else:
                     instrs += bound_unamed(self.select_expr(exp), var)
             case Assign([Subscript(tup, idx, Store())], exp):
-                # TODO done
                 instrs.append(
                     Instr('movq', [self.select_arg(tup), Reg('r11')]))
                 match idx:
@@ -984,7 +965,6 @@ class CompileFunction:
                     Instr('movq', [self.select_arg(exp), Deref('r11', (reg))]))
                 # movq exp, 8(idx + 1)(%r11)
             case Collect(bytes):
-                # TODO done
                 instrs.append(Instr('movq', [Reg('r15'), Reg('rdi')]))
                 instrs.append(Instr('movq', [Immediate(bytes), Reg('rsi')]))
                 instrs.append(Callq('collect', 2))
@@ -992,21 +972,15 @@ class CompileFunction:
             case TailCall(func, args):
                 print("TAIL CALL")
                 i = 0
-                for arg in args:
-                    # TODO: make sure arg coorisponds with X86 arg types
-                    # if isinstance(arg, Variable):
-                    #     print(type(arg))
+                new_args = [self.select_arg(arg) for arg in args]
+                for arg in new_args:
                     instrs.append(Instr('movq', [arg, arg_passing[i]]))
                     i += 1
                 instrs.append(TailJump(func, i))
             case Return(exp):
                 instrs += bound_unamed(self.select_expr(exp), Reg('rax'))
-                # instrs.append(
-                #     Instr('movq', [self.select_expr(exp), Reg('rax')]))
                 instrs.append(Jump(self.conclusion_label))
                 # TODO: ret instruction
-                # instrs.append(
-                #     Instr('movq', [self.select_arg(rv), Reg('rax')]))
             case _:
                 raise Exception('error in select_stmt, unhandled ' + repr(s))
 
@@ -1447,9 +1421,21 @@ class CompileFunction:
                     Instr("movq", [Immediate(v), Reg("rax")]))
                 patched_instrs.append(
                     Instr("movzbq", [src, Reg("rax")]))
+            case Instr('leaq', [exp, dest]) if not isinstance(dest, Reg):
+                # destination must be a register
+                patched_instrs.append(
+                    Instr('leaq', [exp, Reg('rax')]))
+                patched_instrs.append(
+                    Instr('movq', [Reg('rax'), dest]))
+            case TailJump(arg, argCt) if not arg  == Reg('rax'):
+                # make sure arg is the reserved rax register
+                patched_instrs.append(
+                    Instr('movq', [arg, Reg('rax')]))
+                patched_instrs.append(
+                    TailJump(Reg('rax'), argCt))
             case _:
                 patched_instrs.append(i)
-
+            
         return patched_instrs
 
     def patch_instrs(self, ss: List[instr]) -> List[instr]:
@@ -1459,7 +1445,7 @@ class CompileFunction:
 
         return new_instrs
 
-    def patch_instructions(self, p: X86Program) -> X86Program:
+    def patch_instructions(self, p: X86Program) -> Dict:
 
         assert(type(p.body) == dict)
 
@@ -1468,7 +1454,7 @@ class CompileFunction:
         for label, block in p.body.items():
             new_body[label] = self.patch_instrs(block)
 
-        return X86Program(new_body)
+        return new_body
 
     ############################################################################
     # Prelude & Conclusion
