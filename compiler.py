@@ -62,9 +62,12 @@ def analyze_dataflow(G: DirectedAdjList, transfer: FunctionType, bottom, join: F
 
     return mapping
 
-
 class Compiler:
     """compile the whole program, and for each function, call methods in `CompileFunction`"""
+
+    # TODO: How to ref CompileFunction.arg_passing?
+    # num_arg_passing_regs = len(CompileFunction.arg_passing)
+    num_arg_passing_regs = 6
 
     def __init__(self):
         self.functions = []
@@ -72,12 +75,14 @@ class Compiler:
         self.function_compilers = {}
         # function -> {original_name: new_name}
         self.function_limit_renames = {}
+        
 
     def shrink(self, p: Module) -> Module:
         """create main function, making the module body a series of function definitions"""
         assert(isinstance(p, Module))
-        main_args = arguments([], [], [], [] ,[])
-        main = FunctionDef('main', args = main_args, body = [], decorator_list = [], returns = int)
+        main_args = arguments([], [], [], [], [])
+        main = FunctionDef('main', args=main_args, body=[],
+                           decorator_list=[], returns=int)
 
         new_module = []
         for c in p.body:
@@ -98,7 +103,7 @@ class Compiler:
         """change `Name(f)` to `FunRef(f)` for functions defined in the module"""
 
         class RevealFunction(NodeTransformer):
-            
+
             def __init__(self, outer: Compiler):
                 self.outer_instance = outer
                 super().__init__()
@@ -110,7 +115,7 @@ class Compiler:
                         # what if f is a builtin function? guard needed
                         return Call(FunRef(f), args)
                     case _:
-                        return node 
+                        return node
 
         assert(isinstance(p, Module))
         # Why this does't work?
@@ -122,14 +127,14 @@ class Compiler:
             for s in f.body:
                 new_line = RevealFunction(self).visit_Call(s)
                 new_body.append(new_line)
-                    # print("DEBUG, new node: ", ast.dump(n))
+                # print("DEBUG, new node: ", ast.dump(n))
             f.body = new_body
-        
+
         return p
 
     def limit_functions(self, p: Module) -> Module:
         """limit functions to 6 arguments, anything more gets put into a 6th tuple-type argument"""
-        
+
         class LimitFunction(NodeTransformer):
             # limit call sites & convert name of args
 
@@ -146,14 +151,15 @@ class Compiler:
                         return self.mapping[n]
                     case _:
                         return node
-            
+
             def visit_Call(self, node):
                 self.generic_visit(node)
                 match node:
-                    case Call(FunRef(f), args) if len(args) > 6:
+                    case Call(FunRef(f), args) if len(args) > Compiler.num_arg_passing_regs:
                         # print("DEBUG, HIT in visit_FunRef: ", ast.dump(node))
-                        new_args = args[:5]
-                        new_args.append(Tuple(args[5:], Load()))
+                        new_args = args[:Compiler.num_arg_passing_regs - 1]
+                        new_args.append(
+                            Tuple(args[Compiler.num_arg_passing_regs - 1:], Load()))
                         return Call(FunRef(f), new_args)
                     case _:
                         return node
@@ -162,7 +168,7 @@ class Compiler:
             if isinstance(args, list):
                 # print("DEBUG, args: ", args, type(args))
                 # print("DEBUG, argsAST: ", args[1][0])
-                return len(args) > 6
+                return len(args) > Compiler.num_arg_passing_regs
             # else:
                 # print("DEBUG, args: ", ast.dump(args))
             return False
@@ -179,7 +185,8 @@ class Compiler:
                     for i in range(5, len(args)):
                         # TODO: How is this allocated on the heap or appears in shadow stack?
                         # print("DEBUG, dump arg[i]: ", ast.dump(args.args[i]))
-                        alias_mapping[args[i][0]] = Subscript(Name('tup_arg'), Constant(i - 5), Load())
+                        alias_mapping[args[i][0]] = Subscript(
+                            Name('tup_arg'), Constant(i - 5), Load())
                     print("DEBUG, alias_mapping: ", alias_mapping)
                     new_args.append(arg_tup)
                     print("DEBUG, new_args: ", new_args)
@@ -187,7 +194,8 @@ class Compiler:
                     new_body = []
                     for s in f.body:
                         # new_line is new node
-                        new_line = LimitFunction(self, alias_mapping).visit_Name(s)
+                        new_line = LimitFunction(
+                            self, alias_mapping).visit_Name(s)
                         print("DEBUG, new_line: ", new_line)
                         new_body.append(new_line)
                     print("DEBUG, new_body: ", new_body)
@@ -199,7 +207,7 @@ class Compiler:
                         new_line = LimitFunction(self).visit_Call(s)
                         new_body.append(new_line)
                     f.body = new_body
-        
+
         # force the autograder to re-evaluate the types in function definition
         # should be removed in production
         import type_check_Lfun
@@ -211,7 +219,8 @@ class Compiler:
         for f in p.body:
             assert(isinstance(f, FunctionDef))
             self.function_compilers[f.name] = CompileFunction(f.name)
-            f.body = self.function_compilers[f.name].remove_complex_operands(Module(f.body))
+            f.body = self.function_compilers[f.name].remove_complex_operands(
+                Module(f.body))
         return p
 
     def explicate_control(self, p: Module) -> CProgramDefs:
@@ -219,22 +228,25 @@ class Compiler:
             case Module(defs):
                 for f in p.body:
                     assert(isinstance(f, FunctionDef))
-                    f.body = self.function_compilers[f.name].explicate_control(Module(f.body))
+                    f.body = self.function_compilers[f.name].explicate_control(
+                        Module(f.body))
                 return CProgramDefs(p.body)
 
     def select_instructions(self, p: CProgramDefs) -> X86ProgramDefs:
         assert(isinstance(p, CProgramDefs))
         for f in p.defs:
             assert(isinstance(f, FunctionDef))
-            #select instructions
-            f.body = self.function_compilers[f.name].select_instructions(CProgram(f.body))
+            # select instructions
+            f.body = self.function_compilers[f.name].select_instructions(
+                CProgram(f.body))
             new_start_block = []
             i = 0
             # add instr to move each register into arg in at the beginning of the block
             for arg in f.args:
                 match arg[0]:
                     case var if isinstance(var, str):
-                        new_start_block.append(Instr('movq', [Reg(arg_passing[i]), Variable(var)]))
+                        new_start_block.append(
+                            Instr('movq', [Reg(arg_passing[i]), Variable(var)]))
                         i += 1
                     case Default:
                         print("DEBUG in selecting ARG: " + str(type(arg[0])))
@@ -243,6 +255,7 @@ class Compiler:
             f.body[f.name + "start"] = new_start_block
             # fix function definition
             f.args = []
+            # TODO: why?
             f.returns = int
 
         return X86ProgramDefs(p.defs)
@@ -287,17 +300,8 @@ class CompileFunction:
 
     callee_saved = [Reg(x) for x in callee_saved]
 
-    def extend_reg(r: Reg) -> Reg:
-        match r:
-            case Reg(name) if len(name) == 3 and name[0] == 'r':
-                return r
-            case Reg(name) if len(name) == 3 and name[0] == 'e':
-                return Reg('r' + name[1:])
-            case Reg(name) if len(name) == 2:
-                return Reg('r' + name[0] + 'x')
-            case _:
-                raise Exception(
-                    'error in extend_reg, unsupported register name ' + repr(r))
+    builtin_functions = ['input_int', 'print', 'len']
+    builtin_functions = [Name(i) for i in builtin_functions]
 
     def __init__(self, name: str):
         self.name = name
@@ -333,6 +337,18 @@ class CompileFunction:
         for reg in all_reg:
             self.color_reg_map[color_from] = reg
             color_from += 1
+
+    def extend_reg(r: Reg) -> Reg:
+        match r:
+            case Reg(name) if len(name) == 3 and name[0] == 'r':
+                return r
+            case Reg(name) if len(name) == 3 and name[0] == 'e':
+                return Reg('r' + name[1:])
+            case Reg(name) if len(name) == 2:
+                return Reg('r' + name[0] + 'x')
+            case _:
+                raise Exception(
+                    'error in extend_reg, unsupported register name ' + repr(r))
 
     ############################################################################
     # Expose Allocation
@@ -479,7 +495,7 @@ class CompileFunction:
                 (funRef_rcoed, funRef_temps) = self.rco_exp(funRef, True)
                 args_rcoed = []
                 args_temps = []
-                for arg in args: # make sure all args are atomic
+                for arg in args:  # make sure all args are atomic
                     (arg_rcoed, arg_temps) = self.rco_exp(arg, True)
                     args_rcoed.append(arg_rcoed)
                     args_temps += arg_temps
@@ -615,10 +631,6 @@ class CompileFunction:
                 body_ss = self.explicate_stmts(body, new_cont)
                 return body_ss
                 # return body_ss + [Assign([lhs], result)] + force(cont)
-            case Call(funRef, args):
-                return [Assign([lhs], rhs)] + force(cont)
-            case FunRef(f):
-                return [Assign([lhs], rhs)] + force(cont)
             case _:
                 print("DEBUG: hit explicate_assign wild ", rhs)
                 return [Assign([lhs], rhs)] + force(cont)
@@ -675,8 +687,8 @@ class CompileFunction:
                 return [If(Compare(cnd, [Eq()], [Constant(False)]),
                            [self.create_block(els)],
                            [self.create_block(thn)])]
-    
-    def explicate_tail(self, e) -> List[stmt]: # e is a return value
+
+    def explicate_tail(self, e) -> List[stmt]:  # e is a return value
         match e:
             case IfExp(test, thn, orelse):
                 new_thn = self.explicate_tail(thn)
@@ -687,9 +699,12 @@ class CompileFunction:
             case Begin(body, result):
                 new_cont = [Return(result)]
                 return self.explicate_stmts(body, new_cont)
+            # built-in functions don't need to be converted into tail call
+            case Call(f) if f in CompileFunction.builtin_functions:
+                return [Return(e)]
             case Call(func, args):
                 return [TailCall(func, args)]
-            case default:
+            case _:
                 return [Return(e)]
 
     def explicate_stmt(self, s, cont) -> List[stmt]:
