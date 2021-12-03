@@ -349,10 +349,15 @@ n = 7
 print(sum(n, 0) + 36)
 """
 
+def sum(x:int,s:int)-> int :
+    return (s if x == 0 else sum(x - 1, x + s))
+n = 7
+print(sum(n, 0) + 36)
+
 
 progs = [IfElseProg, nestedIfsProg2, whileCaseFromBook, while_while, while_from_class, simple_tuple]
 
-prog = example_simple_function
+prog = tail_if_fun
 
 
 ############################################################################
