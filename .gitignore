@@ -1,3 +1,6 @@
+# IDE
+.vscode/
+
 # Python intermediate
 __pycache__
 
@@ -5,6 +8,7 @@ __pycache__
 *.s
 *.out
 *.o
+*.asm
 
 # temp files for test purpose
 temp*
@@ -12,3 +16,4 @@ input.txt
 
 # test output dir
 test/output
+

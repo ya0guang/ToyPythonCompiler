@@ -22,17 +22,23 @@ arg_passing = ['rdi', 'rsi', 'rdx', 'rcx', 'r8', 'r9', ]
 caller_saved = arg_passing + ['rax', 'r10', 'r11']
 callee_saved = ['rsp', 'rbp', 'rbx', 'r12', 'r13', 'r14', 'r15']
 
-# Allocatable registers = all - rsp - rbp - rax
+# Allocatable registers = all - rsp - rbp - rax - r11 - r15
 allocatable = callee_saved + caller_saved
+
+# TODO: use a list: reserved_regs = ['rsp', 'rbp', 'rbx', 'rax', 'r11', 'r15']
 allocatable.remove('rsp')
 allocatable.remove('rbp')
 allocatable.remove('rax')
+allocatable.remove('r11')
+allocatable.remove('r15')
+
 
 def force(promise):
     if isinstance(promise, types.FunctionType):
         return force(promise())
     else:
         return promise
+
 
 def analyze_dataflow(G: DirectedAdjList, transfer: FunctionType, bottom, join: FunctionType):
     """return a mapping from vertices in G to their dataflow result"""
@@ -53,16 +59,239 @@ def analyze_dataflow(G: DirectedAdjList, transfer: FunctionType, bottom, join: F
             # for v in G.adjacent(node):
             for v in G.ins[node]:
                 worklist.append(v)
-    
+
     return mapping
 
-
 class Compiler:
+    """compile the whole program, and for each function, call methods in `CompileFunction`"""
+
+    # TODO: How to ref CompileFunction.arg_passing?
+    # num_arg_passing_regs = len(CompileFunction.arg_passing)
+    num_arg_passing_regs = 6
+
+    def __init__(self):
+        self.functions = []
+        # function -> CompileFunction instance
+        self.function_compilers = {}
+        # function -> {original_name: new_name}
+        self.function_limit_renames = {}
+        
+
+    def shrink(self, p: Module) -> Module:
+        """create main function, making the module body a series of function definitions"""
+        assert(isinstance(p, Module))
+        main_args = arguments([], [], [], [], [])
+        main = FunctionDef('main', args=main_args, body=[],
+                           decorator_list=[], returns=int)
+
+        new_module = []
+        for c in p.body:
+            match c:
+                case FunctionDef(name, _args, _body, _deco_list, _rv_type):
+                    new_module.append(c)
+                    self.functions.append(name)
+                    # print("DEBUG, function: ", name, "args: ", args.args, body, _deco_list, _rv_type)
+                case stmt():
+                    main.body.append(c)
+
+        main.body.append(Return(Constant(0)))
+        new_module.append(main)
+        print("DEBUG, new module: ", new_module)
+        return Module(new_module)
+
+    def reveal_functions(self, p: Module) -> Module:
+        """change `Name(f)` to `FunRef(f)` for functions defined in the module"""
+
+        class RevealFunction(NodeTransformer):
+
+            def __init__(self, outer: Compiler):
+                self.outer_instance = outer
+                super().__init__()
+
+            def visit_Call(self, node):
+                self.generic_visit(node)
+                match node:
+                    case Call(Name(f), args) if f in self.outer_instance.functions:
+                        # what if f is a builtin function? guard needed
+                        return Call(FunRef(f), args)
+                    case _:
+                        return node
+
+        assert(isinstance(p, Module))
+        # Why this does't work?
+        # new_body = RevealFunction(self).visit_Call(p)
+        # p.body = new_body
+
+        for f in p.body:
+            new_body = []
+            for s in f.body:
+                new_line = RevealFunction(self).visit_Call(s)
+                new_body.append(new_line)
+                # print("DEBUG, new node: ", ast.dump(n))
+            f.body = new_body
+
+        return p
+
+    def limit_functions(self, p: Module) -> Module:
+        """limit functions to 6 arguments, anything more gets put into a 6th tuple-type argument"""
+
+        class LimitFunction(NodeTransformer):
+            # limit call sites & convert name of args
+
+            def __init__(self, outer: Compiler, mapping: dict = {}):
+                self.outer_instance = outer
+                self.mapping = mapping
+                super().__init__()
+
+            def visit_Name(self, node):
+                # substitute the >5th arguments with subscript of a tuple
+                self.generic_visit(node)
+                match node:
+                    case Name(n) if n in self.mapping.keys():
+                        return self.mapping[n]
+                    case _:
+                        return node
+
+            def visit_Call(self, node):
+                self.generic_visit(node)
+                match node:
+                    case Call(FunRef(f), args) if len(args) > Compiler.num_arg_passing_regs:
+                        # print("DEBUG, HIT in visit_FunRef: ", ast.dump(node))
+                        new_args = args[:Compiler.num_arg_passing_regs - 1]
+                        new_args.append(
+                            Tuple(args[Compiler.num_arg_passing_regs - 1:], Load()))
+                        return Call(FunRef(f), new_args)
+                    case _:
+                        return node
+
+        def args_need_limit(args):
+            if isinstance(args, list):
+                # print("DEBUG, args: ", args, type(args))
+                # print("DEBUG, argsAST: ", args[1][0])
+                return len(args) > Compiler.num_arg_passing_regs
+            # else:
+                # print("DEBUG, args: ", ast.dump(args))
+            return False
+
+        assert(isinstance(p, Module))
+        # limit defines
+        for f in p.body:
+            match f:
+                case FunctionDef(_name, args, _body, _deco_list, _rv_type) if args_need_limit(args):
+                    # args = args.args
+                    new_args = args[:5]
+                    arg_tup = ('tup_arg', TupleType([a[1] for a in args[5:]]))
+                    alias_mapping = {}
+                    for i in range(5, len(args)):
+                        # TODO: How is this allocated on the heap or appears in shadow stack?
+                        # print("DEBUG, dump arg[i]: ", ast.dump(args.args[i]))
+                        alias_mapping[args[i][0]] = Subscript(
+                            Name('tup_arg'), Constant(i - 5), Load())
+                    print("DEBUG, alias_mapping: ", alias_mapping)
+                    new_args.append(arg_tup)
+                    print("DEBUG, new_args: ", new_args)
+                    f.args = new_args
+                    new_body = []
+                    for s in f.body:
+                        # new_line is new node
+                        new_line = LimitFunction(
+                            self, alias_mapping).visit_Name(s)
+                        print("DEBUG, new_line: ", new_line)
+                        new_body.append(new_line)
+                    print("DEBUG, new_body: ", new_body)
+                    f.body = new_body
+                case _:
+                    assert(isinstance(f, FunctionDef))
+                    new_body = []
+                    for s in f.body:
+                        new_line = LimitFunction(self).visit_Call(s)
+                        new_body.append(new_line)
+                    f.body = new_body
+
+        # force the autograder to re-evaluate the types in function definition
+        # should be removed in production
+        import type_check_Lfun
+        type_check_Lfun.TypeCheckLfun().type_check(p)
+        return p
+
+    def remove_complex_operands(self, p: Module) -> Module:
+        assert(isinstance(p, Module))
+        for f in p.body:
+            assert(isinstance(f, FunctionDef))
+            self.function_compilers[f.name] = CompileFunction(f.name)
+            f.body = self.function_compilers[f.name].remove_complex_operands(
+                Module(f.body))
+        return p
+
+    def explicate_control(self, p: Module) -> CProgramDefs:
+        match p:
+            case Module(defs):
+                for f in p.body:
+                    assert(isinstance(f, FunctionDef))
+                    f.body = self.function_compilers[f.name].explicate_control(
+                        Module(f.body))
+                return CProgramDefs(p.body)
+
+    def select_instructions(self, p: CProgramDefs) -> X86ProgramDefs:
+        assert(isinstance(p, CProgramDefs))
+        for f in p.defs:
+            assert(isinstance(f, FunctionDef))
+            # select instructions
+            f.body = self.function_compilers[f.name].select_instructions(
+                CProgram(f.body))
+            new_start_block = []
+            i = 0
+            # add instr to move each register into arg in at the beginning of the block
+            for arg in f.args:
+                match arg[0]:
+                    case var if isinstance(var, str):
+                        new_start_block.append(
+                            Instr('movq', [Reg(arg_passing[i]), Variable(var)]))
+                        i += 1
+                    case Default:
+                        print("DEBUG in selecting ARG: " + str(type(arg[0])))
+            # fix the block
+            new_start_block += f.body[f.name + "start"]
+            f.body[f.name + "start"] = new_start_block
+            # fix function definition
+            f.args = []
+            # TODO: why?
+            f.returns = int
+
+        return X86ProgramDefs(p.defs)
+
+    def assign_homes(self, p: X86ProgramDefs) -> X86ProgramDefs:
+        # assert(isinstance(p, X86ProgramDefs))
+        # for f in p.defs:
+        #     assert(isinstance(f, FunctionDef))
+        #     f.body = self.function_compilers[f.name].select_instructions(X86Program(f.body))
+
+        # print("finished assigning homes")
+        # return X86ProgramDefs(p.defs)
+        pass
+
+    def patch_instructions(self, p: X86Program) -> X86Program:
+        # assert(isinstance(p, X86ProgramDefs))
+        # for f in p.defs:
+        #     assert(isinstance(f, FunctionDef))
+        #     f.body = self.function_compilers[f.name].patch_instructions(X86Program(f.body))
+        # return X86ProgramDefs(p.defs)
+        pass
+
+    def prelude_and_conclusion(self, p: X86Program) -> X86Program:
+        pass
+
+
+class CompileFunction:
+    """compile a single function"""
 
     temp_count: int = 0
     tup_temp_count: int = 0
+
     # used for tracking static stack usage
-    stack_count: int = 0
+    normal_stack_count: int = 0
+    shadow_stack_count: int = 0
+    tuple_vars = []
 
     # `calllq`: include first `arg_num` registers in its read-set R
     arg_passing = [Reg(x) for x in arg_passing]
@@ -70,7 +299,45 @@ class Compiler:
     caller_saved = [Reg(x) for x in caller_saved]
 
     callee_saved = [Reg(x) for x in callee_saved]
-    
+
+    builtin_functions = ['input_int', 'print', 'len']
+    builtin_functions = [Name(i) for i in builtin_functions]
+
+    def __init__(self, name: str):
+        self.name = name
+        self.basic_blocks = {}
+        # mappings from a single instruction to a set
+        self.read_set_dict = {}
+        self.write_set_dict = {}
+        self.live_before_set_dict = {}
+        self.live_after_set_dict = {}
+        # this list can be changed for testing spilling
+        self.allocatable = [Reg(x) for x in allocatable]
+        all_reg = [Reg('r11'), Reg('r15'), Reg('rsp'), Reg(
+            'rbp'), Reg('rax')] + self.allocatable
+        self.int_graph = UndirectedAdjList()
+        self.move_graph = UndirectedAdjList()
+        self.control_flow_graph = DirectedAdjList()
+        self.live_before_block = {}
+
+        self.prelude_label = self.name
+        # assign this when iterating CFG
+        self.conclusion_label = self.name + 'conclusion'
+        self.basic_blocks[self.conclusion_label] = []
+        # make the initial conclusion non-empty to avoid errors
+        # TODO: come up with a more elegant solution, maybe from `live_before_block`
+        # self.basic_blocks[self.conclusion_label] = [Expr(Call(Name('input_int'), []))]
+        # why need this?
+        self.sorted_control_flow_graph = []
+        self.used_callee = set()
+
+        # Reserved registers
+        self.color_reg_map = {}
+        color_from = -5
+        for reg in all_reg:
+            self.color_reg_map[color_from] = reg
+            color_from += 1
+
     def extend_reg(r: Reg) -> Reg:
         match r:
             case Reg(name) if len(name) == 3 and name[0] == 'r':
@@ -81,44 +348,12 @@ class Compiler:
                 return Reg('r' + name[0] + 'x')
             case _:
                 raise Exception(
-                        'error in extend_reg, unsupported register name ' + repr(r))
-
-    def __init__(self):
-        self.basic_blocks = {}
-        # mappings from a single instruction to a set
-        self.read_set_dict = {}
-        self.write_set_dict = {}
-        self.live_before_set_dict = {}
-        self.live_after_set_dict = {}
-        # this list can be changed for testing spilling
-        self.allocatable = [Reg(x) for x in allocatable]
-        all_reg = [Reg('rsp'), Reg('rbp'), Reg('rax')] + self.allocatable
-        self.int_graph = UndirectedAdjList()
-        self.move_graph = UndirectedAdjList()
-        self.control_flow_graph = DirectedAdjList()
-        self.live_before_block = {}
-        
-        self.prelude_label = 'main'
-        # assign this when iterating CFG
-        self.conclusion_label = 'conclusion'
-        self.basic_blocks[self.conclusion_label] = []
-        # make the initial conclusion non-empty to avoid errors
-        # TODO: come up with a more elegant solution, maybe from `live_before_block`
-        # self.basic_blocks[self.conclusion_label] = [Expr(Call(Name('input_int'), []))]
-        # why need this?
-        self.sorted_control_flow_graph = []
-        self.used_callee = set()
-
-        self.color_reg_map = {}
-        color_from = -3
-        for reg in all_reg:
-            self.color_reg_map[color_from] = reg
-            color_from += 1
+                    'error in extend_reg, unsupported register name ' + repr(r))
 
     ############################################################################
     # Expose Allocation
-    ############################################################################    
-    
+    ############################################################################
+
     def expose_allocation_hide(self, t: Tuple) -> Begin:
         # Autograder call `expose_allocation` in a wrong way, so this is hidden from the autograder
         """convert a tuple creation into a begin"""
@@ -127,25 +362,29 @@ class Compiler:
         body = []
 
         for i in range(len(content)):
-            if not Compiler.is_atm(content[i]):
+            if not CompileFunction.is_atm(content[i]):
                 print("DEBUG: ???")
-                temp_name = 'temp_tup' + str(self.tup_temp_count) + 'X' + str(i)
+                temp_name = 'temp_tup' + \
+                    str(self.tup_temp_count) + 'X' + str(i)
                 body.append(Assign([Name(temp_name)], content[i]))
 
         tup_bytes = (len(content) + 1) * 8
-        
-        #TODO: may need constant(tup_bytes)
-        if_cond = Compare(BinOp(GlobalValue('free_ptr'), Add(), Constant(tup_bytes)), [Lt()], [GlobalValue('fromspace_end')])
+
+        # TODO: may need constant(tup_bytes)
+        if_cond = Compare(BinOp(GlobalValue('free_ptr'), Add(), Constant(tup_bytes)), [
+                          Lt()], [GlobalValue('fromspace_end')])
         body.append(If(if_cond, [Expr(Constant(0))], [Collect(tup_bytes)]))
 
         var = Name("pyc_temp_tup_" + str(self.tup_temp_count))
         body.append(Assign([var], Allocate(len(content), t.has_type)))
 
         for i in range(len(content)):
-            if not Compiler.is_atm(content[i]):
-                body.append(Assign([Subscript(var, Constant(i), Store())], Name('temp_tup' + str(self.tup_temp_count) + 'X' + str(i))))
+            if not CompileFunction.is_atm(content[i]):
+                body.append(Assign([Subscript(var, Constant(i), Store())], Name(
+                    'temp_tup' + str(self.tup_temp_count) + 'X' + str(i))))
             else:
-                body.append(Assign([Subscript(var, Constant(i), Store())], content[i]))
+                body.append(
+                    Assign([Subscript(var, Constant(i), Store())], content[i]))
 
         self.tup_temp_count += 1
         return Begin(body, var)
@@ -176,7 +415,7 @@ class Compiler:
 
         temps = []
         # tail must be assigned in the match cases
-        if Compiler.is_atm(e):
+        if CompileFunction.is_atm(e):
             """nothing need to do if it's already an `atm`"""
             return (e, temps)
 
@@ -189,41 +428,42 @@ class Compiler:
                 return self.rco_exp(IfExp(args[0], Constant(True), args[1]), need_atomic)
             # call expose_allocation for tuple creation
             case Tuple(_, Load()):
-                #TODO: may need to consider temps and bindings
+                # TODO: may need to consider temps and bindings
                 return self.rco_exp(self.expose_allocation_hide(e), need_atomic)
             case Begin(body, result):
-                #TODO
-                new_body = [new_stat for s in body for new_stat in self.rco_stmt(s)]
+                # TODO
+                new_body = [
+                    new_stat for s in body for new_stat in self.rco_stmt(s)]
                 tail = Begin(new_body, result)
             case UnaryOp(uniop, exp):
                 # `Not()` and `USub`
-                if Compiler.is_atm(exp):
+                if CompileFunction.is_atm(exp):
                     tail = e
                 else:
                     (atm, temps) = self.rco_exp(exp, True)
                     tail = UnaryOp(uniop, atm)
             case BinOp(exp1, binop, exp2):
                 """Sub() and Add()"""
-                if Compiler.is_atm(exp1):
+                if CompileFunction.is_atm(exp1):
                     (exp1_atm, exp1_temps) = (exp1, [])
                 else:
                     (exp1_atm, exp1_temps) = self.rco_exp(exp1, True)
 
-                if Compiler.is_atm(exp2):
+                if CompileFunction.is_atm(exp2):
                     (exp2_atm, exp2_temps) = (exp2, [])
                 else:
                     (exp2_atm, exp2_temps) = self.rco_exp(exp2, True)
 
-                tail = BinOp(exp1_atm,binop, exp2_atm)
+                tail = BinOp(exp1_atm, binop, exp2_atm)
                 temps = exp1_temps + exp2_temps
             case Compare(left, [cmp], [right]):
                 # similar to `BinOp` case
-                if Compiler.is_atm(left):
+                if CompileFunction.is_atm(left):
                     (left_atm, left_temps) = (left, [])
                 else:
                     (left_atm, left_temps) = self.rco_exp(left, True)
 
-                if Compiler.is_atm(right):
+                if CompileFunction.is_atm(right):
                     (right_atm, right_temps) = (right, [])
                 else:
                     (right_atm, right_temps) = self.rco_exp(right, True)
@@ -232,27 +472,40 @@ class Compiler:
                 temps = left_temps + right_temps
             case IfExp(exp_test, exp_body, exp_else):
                 (tail, test_temps) = self.rco_exp(exp_test, False)
-                tail = IfExp(tail, self.letize(exp_body), self.letize(exp_else))
+                tail = IfExp(tail, self.letize(
+                    exp_body), self.letize(exp_else))
                 temps = test_temps
             case Call(Name('input_int'), []):
                 tail = e
             case Call(Name('len')):
-                #TODO not sure if more needs to be done
+                # TODO not sure if more needs to be done
                 tail = e
             case GlobalValue(v):
-                #TODO: create a temp to hold it
+                # TODO: create a temp to hold it
                 tail = e
             case Allocate(len, type_list):
-                #TODO: ???
+                # TODO: ???
                 tail = e
             case Subscript(var, idx, Load()):
                 (var_rcoed, var_temps) = self.rco_exp(var, True)
                 (idx_rcoed, idx_temps) = self.rco_exp(idx, True)
                 tail = Subscript(var_rcoed, idx_rcoed, Load())
                 temps = var_temps + idx_temps
+            case Call(funRef, args):
+                (funRef_rcoed, funRef_temps) = self.rco_exp(funRef, True)
+                args_rcoed = []
+                args_temps = []
+                for arg in args:  # make sure all args are atomic
+                    (arg_rcoed, arg_temps) = self.rco_exp(arg, True)
+                    args_rcoed.append(arg_rcoed)
+                    args_temps += arg_temps
+                tail = Call(funRef_rcoed, args_rcoed)
+                temps = args_temps + funRef_temps
+            case FunRef(f):
+                tail = e
             case _:
                 raise Exception(
-                        'error in rco_exp, unsupported expression ' + repr(e))
+                    'error in rco_exp, unsupported expression ' + repr(e))
 
         if need_atomic:
             var = Name("pyc_temp_var_" + str(self.temp_count))
@@ -273,18 +526,25 @@ class Compiler:
                 (exp_rcoed, temps) = self.rco_exp(exp, False)
                 tail = Expr(exp_rcoed)
             case Assign([Name(var)], exp):
+                # Record all tuples here
+                if isinstance(exp, Tuple):
+                    print("DEBUG: hit tuple, ", var, type(var))
+                    self.tuple_vars.append(var)
                 (exp_rcoed, temps) = self.rco_exp(exp, False)
                 tail = Assign([Name(var)], exp_rcoed)
             case If(exp, stmts_body, stmts_else):
                 # need test
                 (exp_rcoed, temps) = self.rco_exp(exp, False)
-                body_rcoed = [new_stat for s in stmts_body for new_stat in self.rco_stmt(s)]
-                else_rcoed = [new_stat for s in stmts_else for new_stat in self.rco_stmt(s)]
+                body_rcoed = [
+                    new_stat for s in stmts_body for new_stat in self.rco_stmt(s)]
+                else_rcoed = [
+                    new_stat for s in stmts_else for new_stat in self.rco_stmt(s)]
                 tail = If(exp_rcoed, body_rcoed, else_rcoed)
             case While(exp, stmts_body, []):
                 exp_rcoed = self.letize(exp)
                 # (exp_rcoed, temps) = self.rco_exp(exp, False)
-                body_rcoed = [new_stat for s in stmts_body for new_stat in self.rco_stmt(s)]
+                body_rcoed = [
+                    new_stat for s in stmts_body for new_stat in self.rco_stmt(s)]
                 tail = While(exp_rcoed, body_rcoed, [])
             case Collect(bytes):
                 # TODO: ???
@@ -293,28 +553,34 @@ class Compiler:
                 (var_rcoed, var_temps) = self.rco_exp(var, True)
                 (idx_rcoed, idx_temps) = self.rco_exp(idx, True)
                 (exp_rcoed, exp_temps) = self.rco_exp(exp, False)
-                tail = Assign([Subscript(var_rcoed, idx_rcoed, Store())], exp_rcoed)
+                tail = Assign(
+                    [Subscript(var_rcoed, idx_rcoed, Store())], exp_rcoed)
                 temps = var_temps + idx_temps + exp_temps
+            case Return(exp):
+                (atm, temps) = self.rco_exp(exp, False)
+                tail = Return(atm)
             case _:
-                raise Exception('error in rco_stmt, stmt not supported ' + repr(s))
+                raise Exception(
+                    'error in rco_stmt, stmt not supported ' + repr(s))
 
         for binding in temps:
+            # print("DEBUG, binding: ", binding)
             result.append(Assign([binding[0]], binding[1]))
 
         result.append(tail)
         return result
 
-    def remove_complex_operands(self, p: Module) -> Module:
+    def remove_complex_operands(self, p: Module) -> List:
         match p:
             case Module(stmts):
                 new_stmts = [
                     new_stat for s in stmts for new_stat in self.rco_stmt(s)]
-                return Module(new_stmts)
+                return new_stmts
 
     ############################################################################
     # Explicate Control
     ############################################################################
-    
+
     def create_block(self, promise, label: str = None) -> Goto:
         """promise can be a list of statements, or a function returning a list of statements"""
         stmts = force(promise)
@@ -323,17 +589,17 @@ class Compiler:
                 return Goto(l)
             case _:
                 if not label:
-                    label = label_name(generate_name('block'))
+                    label = label_name(generate_name('block' + self.name))
                 self.basic_blocks[label] = stmts
                 return Goto(label)
 
     def create_block_no_lazy(self, stmts: List[stmt], label: str = None) -> str:
-        # TODO: 
+        # TODO:
         """create a block and add it to the block dict,
         return label name of the new block"""
         if not label:
             label = label_name(generate_name('block'))
-        
+
         self.basic_blocks[label] = force(stmts)
         return Goto(label)
 
@@ -368,13 +634,13 @@ class Compiler:
             case _:
                 print("DEBUG: hit explicate_assign wild ", rhs)
                 return [Assign([lhs], rhs)] + force(cont)
-    
+
     def explicate_pred(self, cnd: expr, thn: List[stmt], els: List[stmt]):
         match cnd:
             case Compare(left, [op], [right]):
                 return [If(cnd,
-                    [self.create_block(thn)],
-                    [self.create_block(els)])]
+                           [self.create_block(thn)],
+                           [self.create_block(els)])]
             case Constant(True):
                 return thn
             case Constant(False):
@@ -389,17 +655,20 @@ class Compiler:
                 #     [Goto(self.create_block(els))])]
                 # change to a compare here
                 return [If(Compare(operand, [Eq()], [Constant(False)]),
-                    [self.create_block(thn)],
-                    [self.create_block(els)])]
+                           [self.create_block(thn)],
+                           [self.create_block(els)])]
             case IfExp(test, body, orelse):
                 # in `IfExp` inside pred, body and orelse must also be predicate
                 thn_goto = self.create_block(thn)
                 els_goto = self.create_block(els)
                 # TODO: what if body/orelse is T/F?
                 # body_ss = [If(body, [Goto(thn_label)], [Goto(els_label)])]
-                body_ss = lambda: self.explicate_pred(body, [thn_goto], [els_goto])
+
+                def body_ss(): return self.explicate_pred(
+                    body, [thn_goto], [els_goto])
                 # orelse_ss = [If(orelse, [Goto(thn_label)], [Goto(els_label)])]
-                orelse_ss = lambda: self.explicate_pred(orelse, [thn_goto], [els_goto])
+                def orelse_ss(): return self.explicate_pred(
+                    orelse, [thn_goto], [els_goto])
                 return lambda: self.explicate_pred(test, body_ss, orelse_ss)
             case Let(var, let_rhs, body):
                 # `body must be a predicate`
@@ -409,11 +678,34 @@ class Compiler:
                 # print("DEBUG: tail:", tail, "force: ", force(tail))
                 # return [Assign([var], let_rhs)] + self.explicate_pred(body, thn, els)
                 return [Assign([var], let_rhs)] + force(tail)
+            case Call(funRef, args):
+                var = Name("pyc_temp_var_" + str(self.temp_count))
+                self.temp_count += 1
+                return [Assign([var], cnd)] + self.explicate_pred(var, thn, els)
             case _:
                 print("DEBUG: hit explicate_pred wild")
                 return [If(Compare(cnd, [Eq()], [Constant(False)]),
-                    [self.create_block(els)],
-                    [self.create_block(thn)])]
+                           [self.create_block(els)],
+                           [self.create_block(thn)])]
+
+    def explicate_tail(self, e) -> List[stmt]:  # e is a return value
+        match e:
+            case IfExp(test, thn, orelse):
+                new_thn = self.explicate_tail(thn)
+                new_els = self.explicate_tail(orelse)
+                return self.explicate_pred(test, new_thn, new_els)
+            case Let(var, rhs, thn):
+                return [Assign([var], rhs)] + self.explicate_tail(thn)
+            case Begin(body, result):
+                new_cont = [Return(result)]
+                return self.explicate_stmts(body, new_cont)
+            # built-in functions don't need to be converted into tail call
+            case Call(f) if f in CompileFunction.builtin_functions:
+                return [Return(e)]
+            case Call(func, args):
+                return [TailCall(func, args)]
+            case _:
+                return [Return(e)]
 
     def explicate_stmt(self, s, cont) -> List[stmt]:
         match s:
@@ -438,30 +730,32 @@ class Compiler:
             case Collect(_):
                 print("DEBUG: HIT Collect")
                 return [s] + force(cont)
+            case Return(exp):
+                return self.explicate_tail(exp)
             case _:
-                print("DEBUG: hit explicate_stmt wild")
+                print("DEBUG: hit explicate_stmt wild" + repr(s))
 
         return cont
-    
+
     def explicate_stmts(self, ss: List[stmt], cont) -> List[stmt]:
         for s in reversed(ss):
             cont = self.explicate_stmt(s, cont)
         return cont
 
-    def explicate_control(self, p: Module) -> CProgram:
+    def explicate_control(self, p: Module) -> Dict:
         cont = [Return(Constant(0))]
-        label = label_name('start')
+        label = label_name(self.name + 'start')
         match p:
             case Module(body):
                 new_body = self.explicate_stmts(body, cont)
-                self.create_block_no_lazy(new_body, label = label)
+                self.create_block_no_lazy(new_body, label=label)
                 # print("DEBUG: .start: ", self.basic_blocks[label])
-                return CProgram(self.basic_blocks)
+                return self.basic_blocks
 
     ############################################################################
     # Select Instructions
     ############################################################################
-    
+
     def condition_abbr(cmp: cmpop) -> str:
         """covert the compare operation to an abbreviation in instruction"""
         match cmp:
@@ -478,7 +772,8 @@ class Compiler:
             case LtE():
                 return 'le'
             case _:
-                raise Exception('error in condition_abbr, cmp not supported' + repr(cmp))
+                raise Exception(
+                    'error in condition_abbr, cmp not supported' + repr(cmp))
 
     def select_arg(self, e: expr) -> arg:
         match e:
@@ -494,9 +789,9 @@ class Compiler:
     def select_expr(self, e: expr) -> List[instr]:
         # TODO: binary Sub
         # pretending the variable will always be assigned
-        
+
         def generate_tag(length: int, ts: List) -> int:
-            #TODO: complete this function
+            # TODO: complete this function
             """a helper function to generate the 64-bit tag based on the length of tuple and types"""
             # 1 bit to indicate forwarding (0) or not (1). If 0, then the header is the forwarding pointer.
             # 6 bits to store the length of the tuple (max of 50)
@@ -506,7 +801,7 @@ class Compiler:
             ts = ts.types
             assert(length == len(ts))
             tag = length << 1
-            tag = tag|1
+            tag = tag | 1
             ptrMsk = 0
             for i in range(length):
                 #print("DEBUG: ts[i]: ", ts[i], "type: ", type(ts[i]), "equal?: ", ts[i] is Tuple)
@@ -526,9 +821,9 @@ class Compiler:
                     case _:
                         #print("DEBUG: type ignored for now")
                         ptrMsk = ptrMsk << 1
-            ptrMsk = ptrMsk << 6 #check this
+            ptrMsk = ptrMsk << 6  # check this
             tag = ptrMsk | tag
-            #print(bin(tag))
+            # print(bin(tag))
 
             return tag
 
@@ -536,18 +831,25 @@ class Compiler:
         match e:
             case Call(Name('input_int'), []):
                 instrs.append(Callq('read_int', 0))
-                instrs.append(Instr('movq', [Reg('rax'), Variable("Unnamed_Pyc_Var")]))
+                instrs.append(
+                    Instr('movq', [Reg('rax'), Variable("Unnamed_Pyc_Var")]))
             case UnaryOp(USub(), atm):
-                instrs.append(Instr('movq', [self.select_arg(atm), Variable("Unnamed_Pyc_Var")]))
+                instrs.append(
+                    Instr('movq', [self.select_arg(atm), Variable("Unnamed_Pyc_Var")]))
                 instrs.append(Instr('negq', [Variable("Unnamed_Pyc_Var")]))
             case UnaryOp(Not(), atm):
-                instrs.append(Instr('movq', [self.select_arg(atm), Variable("Unnamed_Pyc_Var")]))
-                instrs.append(Instr('xorq', [Immediate(1), Variable("Unnamed_Pyc_Var")]))
+                instrs.append(
+                    Instr('movq', [self.select_arg(atm), Variable("Unnamed_Pyc_Var")]))
+                instrs.append(
+                    Instr('xorq', [Immediate(1), Variable("Unnamed_Pyc_Var")]))
             case Compare(atm1, [cmp], [atm2]):
                 # switch atm1 and atm2
-                instrs.append(Instr('cmpq', [self.select_arg(atm2), self.select_arg(atm1)]))
-                instrs.append(Instr('set' + Compiler.condition_abbr(cmp), [Reg('al')]))
-                instrs.append(Instr('movzbq', [Reg('al'), Variable("Unnamed_Pyc_Var")]))
+                instrs.append(
+                    Instr('cmpq', [self.select_arg(atm2), self.select_arg(atm1)]))
+                instrs.append(
+                    Instr('set' + CompileFunction.condition_abbr(cmp), [Reg('al')]))
+                instrs.append(
+                    Instr('movzbq', [Reg('al'), Variable("Unnamed_Pyc_Var")]))
             case BinOp(atm1, Add(), atm2):
                 # TODO: optimize when the oprand and destination is the same
                 # if isinstance(atm1, Name):
@@ -563,7 +865,7 @@ class Compiler:
                 instrs.append(
                     Instr('movq', [self.select_arg(atm1), Variable("Unnamed_Pyc_Var")]))
                 instrs.append(
-                    Instr('subq', [self.select_arg(atm2), Variable("Unnamed_Pyc_Var")]))    
+                    Instr('subq', [self.select_arg(atm2), Variable("Unnamed_Pyc_Var")]))
             case Subscript(tup, idx, Load()):
                 match idx:
                     case Constant(i):
@@ -613,10 +915,19 @@ class Compiler:
                 instrs.append(Instr('movq', [Global('free_ptr'), Reg('r11')]))
                 instrs.append(Instr('addq', [Immediate(8*(length + 1)), Global('free_ptr')]))
                 instrs.append(Instr('movq', [Immediate(tag), Deref('r11', 0)]))
-                instrs.append(Instr('movq', [Reg('r11'), Variable("Unnamed_Pyc_Var")]))
+                instrs.append(
+                    Instr('movq', [Reg('r11'), Variable("Unnamed_Pyc_Var")]))
             case GlobalValue(var):
-                instrs.append(Instr('movq', [Global(var), Variable("Unnamed_Pyc_Var")]))
-                #instrs.append(Global(var))      
+                instrs.append(
+                    Instr('movq', [Global(var), Variable("Unnamed_Pyc_Var")]))
+                # instrs.append(Global(var))
+            case Call(func, args):
+                i = 0
+                new_args = [self.select_arg(arg) for arg in args]
+                for arg in new_args:
+                    instrs.append(Instr('movq', [arg, arg_passing[i]]))
+                    i += 1
+                instrs.append(IndirectCallq(func, i))
             case _:
                 instrs.append(
                     Instr('movq', [self.select_arg(e), Variable("Unnamed_Pyc_Var")]))
@@ -625,12 +936,18 @@ class Compiler:
 
     def select_stmt(self, s: stmt) -> List[instr]:
 
-        def bound_unamed(instrs: List[instr], var: str) -> List[instr]:
+        def bound_unamed(instrs: List[instr], var) -> List[instr]:
             new_instrs = []
             for i in instrs:
                 match i:
-                    case Instr(oprtr, args):
+                    # for variable name
+                    case Instr(oprtr, args) if isinstance(var, str):
                         new_args = [Variable(var) if a == Variable(
+                            "Unnamed_Pyc_Var") else a for a in args]
+                        new_instrs.append(Instr(oprtr, new_args))
+                    # if var is a register
+                    case Instr(oprtr, args) if isinstance(var, Reg):
+                        new_args = [var if a == Variable(
                             "Unnamed_Pyc_Var") else a for a in args]
                         new_instrs.append(Instr(oprtr, new_args))
                     case wild:
@@ -648,19 +965,14 @@ class Compiler:
                 else_label = orelse[0].label
                 match test:
                     case Compare(atm1, [cmp], [atm2]):
-                        instrs.append(Instr('cmpq', [self.select_arg(atm2), self.select_arg(atm1)]))
-                        abbr = Compiler.condition_abbr(cmp)
+                        instrs.append(
+                            Instr('cmpq', [self.select_arg(atm2), self.select_arg(atm1)]))
+                        abbr = CompileFunction.condition_abbr(cmp)
                     case _:
-                        raise Exception('error in select_expr, if: invlaid test ' + repr(test))
+                        raise Exception(
+                            'error in select_expr, if: invlaid test ' + repr(test))
                 instrs.append(JumpIf(abbr, body_label))
                 instrs.append(Jump(else_label))
-            case Return(rv):
-                instrs.append(
-                    Instr('movq', [self.select_arg(rv), Reg('rax')]))
-                instrs.append(Jump(self.conclusion_label))
-                # TODO: ret instruction
-                # instrs.append(
-                #     Instr('movq', [self.select_arg(rv), Reg('rax')]))
             case Expr(Call(Name('print'), [atm])):
                 instrs.append(
                     Instr('movq', [self.select_arg(atm), Reg('rdi')]))
@@ -670,28 +982,45 @@ class Compiler:
             case Expr(exp):
                 instrs += self.select_expr(exp)
             case Assign([Name(var)], exp):
-                instrs += bound_unamed(self.select_expr(exp), var)
-            case Assign([Subscript(tup,idx,Store())],exp):
-                #TODO done
-                instrs.append(Instr('movq', [self.select_arg(tup), Reg('r11')]))
+                if isinstance(exp, FunRef):
+                    instrs.append(Instr('leaq', [exp, Variable(var)]))
+                elif isinstance(exp, Call):
+                    instrs += self.select_expr(exp)
+                    instrs.append(Instr('movq', [Reg('rax'), Variable(var)]))
+                else:
+                    instrs += bound_unamed(self.select_expr(exp), var)
+            case Assign([Subscript(tup, idx, Store())], exp):
+                instrs.append(
+                    Instr('movq', [self.select_arg(tup), Reg('r11')]))
                 match idx:
                     case Constant(i):
                         reg = 8*(i+1)
-                instrs.append(Instr('movq', [self.select_arg(exp), Deref('r11', (reg))]))
-                #movq exp, 8(idx + 1)(%r11)
+                instrs.append(
+                    Instr('movq', [self.select_arg(exp), Deref('r11', (reg))]))
+                # movq exp, 8(idx + 1)(%r11)
             case Collect(bytes):
-                #TODO done
-                instrs.append(Instr('movq', [Reg('r15'),Reg('rdi')]))
+                instrs.append(Instr('movq', [Reg('r15'), Reg('rdi')]))
                 instrs.append(Instr('movq', [Immediate(bytes), Reg('rsi')]))
-                instrs.append(Callq('collect',2))
-                #how many args? 2?
-                
+                instrs.append(Callq('collect', 2))
+                # how many args? 2?
+            case TailCall(func, args):
+                print("TAIL CALL")
+                i = 0
+                new_args = [self.select_arg(arg) for arg in args]
+                for arg in new_args:
+                    instrs.append(Instr('movq', [arg, arg_passing[i]]))
+                    i += 1
+                instrs.append(TailJump(func, i))
+            case Return(exp):
+                instrs += bound_unamed(self.select_expr(exp), Reg('rax'))
+                instrs.append(Jump(self.conclusion_label))
+                # TODO: ret instruction
             case _:
                 raise Exception('error in select_stmt, unhandled ' + repr(s))
 
         return instrs
 
-    def select_instructions(self, p: CProgram) -> X86Program:
+    def select_instructions(self, p: CProgram) -> Dict:
         match p:
             # case Module(stmts):
             #     insts = [inst for s in stmts for inst in self.select_stmt(s)]
@@ -699,11 +1028,12 @@ class Compiler:
             case CProgram(blks):
                 x86_blks = {}
                 for (label, block) in blks.items():
-                    x86_blks[label] = [inst for s in block for inst in self.select_stmt(s)]
-                return X86Program(x86_blks)
+                    x86_blks[label] = [
+                        inst for s in block for inst in self.select_stmt(s)]
+                return x86_blks
             case _:
                 raise Exception(
-                        'error in read_write_sets, select_instructions' + repr(p))
+                    'error in select_instructions, ' + repr(p))
 
     ############################################################################
     # Liveness after set generation
@@ -730,27 +1060,41 @@ class Compiler:
             target = set()
 
             match s:
-                #TODO: Instr cmpq, xorq, set, movzbq need to be added? Yes
+                # TODO: Instr cmpq, xorq, set, movzbq need to be added? Yes
                 case Instr("movq", [src, dest]):
-                    (read_set, write_set) = (extract_locations([src]), extract_locations([dest]))
+                    (read_set, write_set) = (extract_locations(
+                        [src]), extract_locations([dest]))
                 case Instr(binop, [arg1, arg2]) if binop in ['addq', 'subq']:
-                    (read_set, write_set) = (extract_locations([arg1, arg2]), extract_locations([arg2]))
+                    (read_set, write_set) = (extract_locations(
+                        [arg1, arg2]), extract_locations([arg2]))
                 case Instr("negq", [arg]):
-                    (read_set, write_set) = (extract_locations([arg]), extract_locations([arg]))
+                    (read_set, write_set) = (extract_locations(
+                        [arg]), extract_locations([arg]))
                 # case Instr("subq", [arg1, arg2]):
                 #     (read_set, write_set) = (extract_locations([arg1, arg2]), extract_locations([arg2]))
                 case Instr("cmpq", [arg1, arg2]):
-                    (read_set, write_set) = (extract_locations([arg1, arg2]), {})
+                    (read_set, write_set) = (
+                        extract_locations([arg1, arg2]), {})
                 case Instr("xorq", [arg1, arg2]):
-                    (read_set, write_set) = (extract_locations([arg1, arg2]), {})
+                    (read_set, write_set) = (
+                        extract_locations([arg1, arg2]), {})
                 case Instr("movzbq", [src, dest]):
                     # TODO: remove hardcode to %al
-                    (read_set, write_set) = ([Reg('rax')], extract_locations([dest]))
+                    (read_set, write_set) = (
+                        [Reg('rax')], extract_locations([dest]))
+                case Instr("sarq", [Immediate(_), arg]):
+                    (read_set, write_set) = (extract_locations(
+                        [arg]), extract_locations([arg]))
+                case Instr("andq", [arg1, arg2]):
+                    (read_set, write_set) = (extract_locations(
+                        [arg1, arg2]), extract_locations([arg2]))
                 case Instr(ins, [arg]) if len(ins) >= 3 and ins[:3] == 'set':
                     # TODO: match each sub instructions of `set`, maybe in an elegant way?
-                    (read_set, write_set) = ({}, extract_locations([Reg('rax')]))
+                    (read_set, write_set) = (
+                        {}, extract_locations([Reg('rax')]))
                 case Callq(_func_name, num_args):
-                    (read_set, write_set) = (extract_locations(Compiler.arg_passing[:num_args]), extract_locations(Compiler.caller_saved))
+                    (read_set, write_set) = (extract_locations(
+                        CompileFunction.arg_passing[:num_args]), extract_locations(CompileFunction.caller_saved))
                 case Instr('nop', _):
                     pass
                 case Jump(dest):
@@ -771,17 +1115,17 @@ class Compiler:
             last_set = starting_las
             for ins in reversed(block):
                 self.live_after_set_dict[ins] = last_set
-                self.live_before_set_dict[ins] = last_set.difference(self.write_set_dict[ins]).union(self.read_set_dict[ins])
+                self.live_before_set_dict[ins] = last_set.difference(
+                    self.write_set_dict[ins]).union(self.read_set_dict[ins])
                 last_set = self.live_before_set_dict[ins]
-            
+
             return last_set
 
-
         ####### Build Control Flow Graph ##########
-        
+
         # Hongbo: I use label here to build control_flow_graph, please use self.basic_blocks[label] or p.body[label] to find the corres block
-        
-        # generate the read & write set for each instruction, and build CFG 
+
+        # generate the read & write set for each instruction, and build CFG
         assert(isinstance(p, X86Program))
         assert(isinstance(p.body, dict))
         self.basic_blocks = p.body
@@ -794,9 +1138,10 @@ class Compiler:
                 # please note the sequence of argument MATTERS
                 self.control_flow_graph.add_edge(label, t)
 
-        join = lambda x, y: x.union(y)
+        def join(x, y): return x.union(y)
 
-        mapping = analyze_dataflow(self.control_flow_graph, transfer, set(), join)
+        mapping = analyze_dataflow(
+            self.control_flow_graph, transfer, set(), join)
 
         # for label in topological_sort(transpose(self.control_flow_graph)):
         #     # conclusion block may not exist early
@@ -813,7 +1158,7 @@ class Compiler:
         #         self.live_after_set_dict[ins] = last_set
         #         self.live_before_set_dict[ins] = last_set.difference(self.write_set_dict[ins]).union(self.read_set_dict[ins])
         #         last_set = self.live_before_set_dict[ins]
-        
+
         print(mapping)
         self.live_before_block = mapping
 
@@ -837,16 +1182,16 @@ class Compiler:
     def build_interference(self, las_dict: Dict[instr, set]) -> bool:
         """store the interference graph in member, `self.int_graph`"""
         for ins, las in las_dict.items():
-        # for i in range(len(ins_list)):
-        #     ins = ins_list[i]  # instruction
-        #     las = las_list[i]  # live-after set
+            # for i in range(len(ins_list)):
+            #     ins = ins_list[i]  # instruction
+            #     las = las_list[i]  # live-after set
             match ins:
                 case Instr("movq", [src, dest]):
                     for loc in las:
                         self.int_graph.add_vertex(loc)
                         if not (loc == src or loc == dest):
                             self.int_graph.add_edge(loc, dest)
-                # TODO: make movzbq and set<cc> more general
+                # TODO: make movzbq more general
                 case Instr("movzbq", [_, dest]):
                     for loc in las:
                         self.int_graph.add_vertex(loc)
@@ -858,7 +1203,7 @@ class Compiler:
                     for loc in las:
                         self.int_graph.add_vertex(loc)
                         self.int_graph.add_edge(loc, Reg("rax"))
-                case Instr(binop, [_, arg]) if binop in ['addq', 'subq']:
+                case Instr(binop, [_, arg]) if binop in ['addq', 'subq', 'andq', 'orq']:
                     for loc in las:
                         if not loc == arg:
                             self.int_graph.add_edge(loc, arg)
@@ -866,9 +1211,13 @@ class Compiler:
                     for loc in las:
                         if not loc == arg:
                             self.int_graph.add_edge(loc, arg)
+                case Instr("sarq", [Immediate(_), arg]):  # similar to negq
+                    for loc in las:
+                        if not loc == arg:
+                            self.int_graph.add_edge(loc, arg)
                 case Callq(_func_name, _num_args):
                     for loc in las:
-                        for dest in Compiler.caller_saved:
+                        for dest in CompileFunction.caller_saved:
                             if not dest == loc:
                                 self.int_graph.add_edge(loc, dest)
                 # trivial reads/jumps
@@ -889,14 +1238,25 @@ class Compiler:
     ############################################################################
 
     def color_graph(self, graph: UndirectedAdjList) -> Dict[location, int]:
-
-        # TODO: move biasing
+        """use negative numbers to represent reserved registers
+        use positive number to represent allocatable reg/stack spills
+        use imaginary number to represent shadow stack"""
 
         saturation_dict = {}
         assign_dict = {}
 
         def less(x: location, y: location):
             return len(saturation_dict[x.key]) < len(saturation_dict[y.key])
+
+        def shadow_or_stack(v: Variable):
+            assert(isinstance(v, Variable))
+            # How to check it's really a tup?
+            if v.id.startswith('pyc_temp_tup') or v.id.startswith('temp_tup') or (v.id in self.tuple_vars):
+                # goes to shadow stack
+                return (0+1j, 0+1j)
+            else:
+                # goes to stack
+                return (0, 1)
 
         # initialize saturation_dict
         for v in graph.vertices():
@@ -907,7 +1267,8 @@ class Compiler:
             if isinstance(v, Reg):
                 # find key for the register in `allocation` dict
                 for index, reg in self.color_reg_map.items():
-                    extended_reg = Compiler.extend_reg(reg)
+                    # TODO: correct? extended_reg is not used
+                    extended_reg = CompileFunction.extend_reg(reg)
                     # print("DEBUG: v:,", v, " reg: ", reg)
                     if reg == v:
                         assign_dict[v] = index
@@ -923,8 +1284,8 @@ class Compiler:
 
         for _ in range(len(saturation_dict)):
             v = pq.pop()
-            # skip register vertices, since they've been assigned a home
-            if isinstance(v, Reg):
+            # skip register vertices or already assigned vars, since they've been assigned a home
+            if isinstance(v, Reg) or isinstance(v, Global) or isinstance(v, Deref):
                 continue
             v_saturation = saturation_dict[v]
             colored = False
@@ -940,14 +1301,17 @@ class Compiler:
                         assign_dict[v] = assign_dict[candidate]
                         colored = True
 
-            color = 0
+            # color = 0
+            (color, step) = shadow_or_stack(v)
+
             # if not going into biased move
+            print("DEBUG in color_graph: v, ", v)
             while not colored:
                 if color not in v_saturation:
                     assign_dict[v] = color
                     colored = True
                 else:
-                    color += 1
+                    color += step
 
             for adjacent in graph.adjacent(v):
                 saturation_dict[adjacent].add(assign_dict[v])
@@ -991,19 +1355,39 @@ class Compiler:
 
     def map_colors(self, coloring: Dict[location, int]) -> Dict[location, arg]:
         """return a dict mapping colors to registers or stack locations"""
+
+        # TODO: record how much shadow stack and stack space is used here
         allocatable_reg_num = len(self.allocatable)
         result = {}
+
+        shadow_stack = {}
+        normal_stack = {}
+
+        # seprate the shadow stack and normal stack
         for vertex, color in coloring.items():
+            if isinstance(color, int):
+                normal_stack[vertex] = color
+            if isinstance(color, complex):
+                shadow_stack[vertex] = color
+
+        for vertex, color in normal_stack.items():
             if color < allocatable_reg_num:
                 result[vertex] = self.color_reg_map[color]
             else:
                 result[vertex] = Deref(
                     "rbp", - (color - allocatable_reg_num + 1) * 8)
-                self.stack_count += 1
+                self.normal_stack_count += 1
+
+        for vertex, color in shadow_stack.items():
+            # spill all
+            offset = int(color.imag - 1)
+            result[vertex] = Deref(
+                "r15", - (offset + 1) * 8)
+            self.shadow_stack_count += 1
 
         return result
 
-    def assign_homes(self, p: X86Program) -> X86Program:
+    def assign_homes(self, p: X86Program) -> Dict:
 
         # assuming p.body is a list
         las_list = self.uncover_live(p)
@@ -1012,7 +1396,7 @@ class Compiler:
         coloring = self.color_graph(self.int_graph)
 
         # figure out which registers need saving
-        for r in Compiler.callee_saved[2:]:
+        for r in CompileFunction.callee_saved[2:]:
             # find the color of register
             color = None
             for index, reg in self.color_reg_map.items():
@@ -1021,14 +1405,16 @@ class Compiler:
             # this color(reg) is used
             if color in coloring.values():
                 self.used_callee.add(r)
-        
-        home = self.map_colors(coloring)
 
-        return X86Program(self.assign_homes_instrs(p.body, home))
+        home = self.map_colors(coloring)
+        print("DEBUG: home: ", home)
+
+        return self.assign_homes_instrs(p.body, home)
 
     ############################################################################
     # Patch Instructions
     ############################################################################
+    # TODO: Patch Instructions is not modified for tuples, may subject to change
 
     def patch_instr(self, i: instr) -> List[instr]:
         patched_instrs = []
@@ -1062,16 +1448,28 @@ class Compiler:
                 patched_instrs.append(
                     Instr("movq", [Immediate(v), Reg("rax")]))
                 patched_instrs.append(
-                    Instr("cmpq", [src, Reg("rax")]))    
+                    Instr("cmpq", [src, Reg("rax")]))
             case Instr("movzbq", [src, Immediate(v)]):
                 # 2nd Argument must be a register
                 patched_instrs.append(
                     Instr("movq", [Immediate(v), Reg("rax")]))
                 patched_instrs.append(
                     Instr("movzbq", [src, Reg("rax")]))
+            case Instr('leaq', [exp, dest]) if not isinstance(dest, Reg):
+                # destination must be a register
+                patched_instrs.append(
+                    Instr('leaq', [exp, Reg('rax')]))
+                patched_instrs.append(
+                    Instr('movq', [Reg('rax'), dest]))
+            case TailJump(arg, argCt) if not arg  == Reg('rax'):
+                # make sure arg is the reserved rax register
+                patched_instrs.append(
+                    Instr('movq', [arg, Reg('rax')]))
+                patched_instrs.append(
+                    TailJump(Reg('rax'), argCt))
             case _:
                 patched_instrs.append(i)
-
+            
         return patched_instrs
 
     def patch_instrs(self, ss: List[instr]) -> List[instr]:
@@ -1081,7 +1479,7 @@ class Compiler:
 
         return new_instrs
 
-    def patch_instructions(self, p: X86Program) -> X86Program:
+    def patch_instructions(self, p: X86Program) -> Dict:
 
         assert(type(p.body) == dict)
 
@@ -1089,8 +1487,8 @@ class Compiler:
 
         for label, block in p.body.items():
             new_body[label] = self.patch_instrs(block)
-                
-        return X86Program(new_body)
+
+        return new_body
 
     ############################################################################
     # Prelude & Conclusion
@@ -1099,13 +1497,15 @@ class Compiler:
     def prelude_and_conclusion(self, p: X86Program) -> X86Program:
 
         def align():
-            alignment = 8 * (len(self.used_callee) + self.stack_count) # current alignment
+            alignment = 8 * (len(self.used_callee) +
+                             self.normal_stack_count)  # current alignment
             if (alignment % 16) != 0:
                 alignment += 8
-            return alignment - (8 * len(self.used_callee)) 
-            
+            return alignment - (8 * len(self.used_callee))
+
         self.used_callee = list(self.used_callee)
         stack_frame_size = align()
+        shadow_stack_size = self.shadow_stack_count * 8
 
         prelude = []
         prelude.append(Instr('pushq', [Reg('rbp')]))
@@ -1113,11 +1513,24 @@ class Compiler:
         for r in self.used_callee:
             prelude.append(Instr('pushq', [r]))
         # TODO: ignore this when sub 0
-        prelude.append(Instr('subq', [Immediate(stack_frame_size), Reg('rsp')]))
+        prelude.append(
+            Instr('subq', [Immediate(stack_frame_size), Reg('rsp')]))
+        # shadow stack handling
+        prelude.append(Instr('movq', [Immediate(16384), Reg('rdi')]))
+        prelude.append(Instr('movq', [Immediate(16384), Reg('rsi')]))
+        prelude.append(Callq('initialize', 2))
+        prelude.append(Instr('movq', [Global('rootstack_begin'), Reg('r15')]))
+        # "movq $0, $0(%r15)" = "movq $0, (%r15)"
+        prelude.append(Instr('movq', [Immediate(0), Deref('r15', 0)]))
+        prelude.append(
+            Instr('addq', [Immediate(shadow_stack_size), Reg('r15')]))
         prelude.append((Jump('start')))
 
         conclusion = []
-        conclusion.append(Instr('addq', [Immediate(stack_frame_size), Reg('rsp')]))
+        conclusion.append(
+            Instr('subq', [Immediate(shadow_stack_size), Reg('r15')]))
+        conclusion.append(
+            Instr('addq', [Immediate(stack_frame_size), Reg('rsp')]))
         for r in reversed(self.used_callee):
             conclusion.append(Instr('popq', [r]))
         conclusion.append(Instr('popq', [Reg('rbp')]))
