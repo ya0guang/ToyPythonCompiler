@@ -108,12 +108,14 @@ class Compiler:
                 self.outer_instance = outer
                 super().__init__()
 
-            def visit_Call(self, node):
+            def visit_Name(self, node):
                 self.generic_visit(node)
                 match node:
-                    case Call(Name(f), args) if f in self.outer_instance.functions:
+                    case Name(f) if f in self.outer_instance.functions:
+                        # TODO: iterable `FunRef`
                         # what if f is a builtin function? guard needed
-                        return Call(FunRef(f), args)
+                        self.generic_visit(node)
+                        return FunRef(f)
                     case _:
                         return node
 
@@ -125,7 +127,7 @@ class Compiler:
         for f in p.body:
             new_body = []
             for s in f.body:
-                new_line = RevealFunction(self).visit_Call(s)
+                new_line = RevealFunction(self).visit_Name(s)
                 new_body.append(new_line)
                 # print("DEBUG, new node: ", ast.dump(n))
             f.body = new_body
