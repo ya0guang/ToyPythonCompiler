@@ -1004,14 +1004,14 @@ class CompileFunction:
                 instrs.append(Instr('movq', [Immediate(bytes), Reg('rsi')]))
                 instrs.append(Callq('collect', 2))
                 # how many args? 2?
-            case TailCall(func, args):
+            case TailCall(Name(func), args):
                 print("TAIL CALL")
                 i = 0
                 new_args = [self.select_arg(arg) for arg in args]
                 for arg in new_args:
                     instrs.append(Instr('movq', [arg, CompileFunction.arg_passing[i]]))
                     i += 1
-                instrs.append(TailJump(func, i))
+                instrs.append(TailJump(Variable(func), i))
             case Return(exp):
                 instrs += bound_unamed(self.select_expr(exp), Reg('rax'))
                 instrs.append(Jump(self.conclusion_label))
@@ -1365,6 +1365,9 @@ class CompileFunction:
                 new_func = self.assign_homes_arg(func, home)
                 print("DEBUG, IndirectCallq case in assign_homes_instr, new_func: ")
                 return IndirectCallq(new_func, num_args)
+            case TailJump(func, num_args):
+                new_func = self.assign_homes_arg(func, home)
+                return TailJump(new_func, num_args)
             case other:
                 print("WARNING, hit wild case in assign_homes_instr: ", other.__repr__())
                 return other

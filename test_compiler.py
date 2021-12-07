@@ -9,9 +9,10 @@ import interp_Cfun
 from interp_x86 import eval_x86
 
 prog = """
-def add(x:int,y:int)-> int :
-  return x + y
-print(add(40, 2))
+def sum(x:int,s:int)-> int :
+  return (s if x == 0 else sum(x - 1, x + s))
+n = input_int()
+print(sum(n, 0) + 36)
 """
 
 # prog = """
