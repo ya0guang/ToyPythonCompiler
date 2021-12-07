@@ -289,10 +289,14 @@ class Compiler:
 
     def prelude_and_conclusion(self, p: X86ProgramDefs) -> X86Program:
         assert(isinstance(p, X86ProgramDefs))
+        new_body = {}
         for f in p.defs:
             assert(isinstance(f, FunctionDef))
             f.body = self.function_compilers[f.name].prelude_and_conclusion(X86Program(f.body))
-        return X86Program(p.defs)
+            # print("DEBUG, f.body: ", f.body)
+            new_body.update(f.body)
+
+        return X86Program(new_body)
 
 
 class CompileFunction:
@@ -917,13 +921,14 @@ class CompileFunction:
                 instrs.append(
                     Instr('movq', [Global(var), Variable("Unnamed_Pyc_Var")]))
                 # instrs.append(Global(var))
-            case Call(func, args):
+            case Call(Name(func), args):
                 i = 0
                 new_args = [self.select_arg(arg) for arg in args]
                 for arg in new_args:
                     instrs.append(Instr('movq', [arg, CompileFunction.arg_passing[i]]))
                     i += 1
-                instrs.append(IndirectCallq(func, i))
+                # TODO: what if not an indirect call?
+                instrs.append(IndirectCallq(Variable(func), i))
             case _:
                 instrs.append(
                     Instr('movq', [self.select_arg(e), Variable("Unnamed_Pyc_Var")]))
@@ -1103,7 +1108,8 @@ class CompileFunction:
                 case TailJump(address, num_args): #TODO check this
                     (read_set, write_set) = (extract_locations(
                         CompileFunction.arg_passing[:num_args]), extract_locations(CompileFunction.caller_saved))
-                case Instr("leaq", [src, dest]): #TODO check this, should be same as move
+                case Instr("leaq", [src, dest]): #TODO check this, should be same as move'
+                    print("DEBUG: hit leaq")
                     (read_set, write_set) = (extract_locations(
                         [src]), extract_locations([dest]))
                 case _:
@@ -1344,6 +1350,7 @@ class CompileFunction:
         if a in home.keys():
             return home[a]
         else:
+            print("WARNING: home not found for a in assign_homes_arg", a.__repr__())
             return a
 
     def assign_homes_instr(self, i: instr,
@@ -1354,7 +1361,12 @@ class CompileFunction:
                 for a in args:
                     new_args.append(self.assign_homes_arg(a, home))
                 return Instr(oprtr, new_args)
+            case IndirectCallq(func, num_args):
+                new_func = self.assign_homes_arg(func, home)
+                print("DEBUG, IndirectCallq case in assign_homes_instr, new_func: ")
+                return IndirectCallq(new_func, num_args)
             case other:
+                print("WARNING, hit wild case in assign_homes_instr: ", other.__repr__())
                 return other
 
     def assign_homes_instrs(self, basic_blocks: Dict[str, List[instr]],
