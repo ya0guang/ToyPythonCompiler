@@ -268,9 +268,18 @@ class Compiler:
 
         # print("finished assigning homes")
         # return X86ProgramDefs(p.defs)
-        pass
+        assert(isinstance(p, X86ProgramDefs))
+        for f in p.defs:
+            assert(isinstance(f, FunctionDef))
+            f.body = self.function_compilers[f.name].assign_homes(X86Program(f.body))
+        return X86ProgramDefs(p.defs)
 
-    def patch_instructions(self, p: X86Program) -> X86Program:
+    def patch_instructions(self, p: X86ProgramDefs) -> X86ProgramDefs:
+        assert(isinstance(p, X86ProgramDefs))
+        for f in p.defs:
+            assert(isinstance(f, FunctionDef))
+            f.body = self.function_compilers[f.name].patch_instructions(X86Program(f.body))
+        return X86ProgramDefs(p.defs)
         # assert(isinstance(p, X86ProgramDefs))
         # for f in p.defs:
         #     assert(isinstance(f, FunctionDef))
@@ -278,8 +287,12 @@ class Compiler:
         # return X86ProgramDefs(p.defs)
         pass
 
-    def prelude_and_conclusion(self, p: X86Program) -> X86Program:
-        pass
+    def prelude_and_conclusion(self, p: X86ProgramDefs) -> X86Program:
+        assert(isinstance(p, X86ProgramDefs))
+        for f in p.defs:
+            assert(isinstance(f, FunctionDef))
+            f.body = self.function_compilers[f.name].prelude_and_conclusion(X86Program(f.body))
+        return X86Program(p.defs)
 
 
 class CompileFunction:
@@ -906,7 +919,7 @@ class CompileFunction:
                 i = 0
                 new_args = [self.select_arg(arg) for arg in args]
                 for arg in new_args:
-                    instrs.append(Instr('movq', [arg, arg_passing[i]]))
+                    instrs.append(Instr('movq', [arg, CompileFunction.arg_passing[i]]))
                     i += 1
                 instrs.append(IndirectCallq(func, i))
             case _:
@@ -989,7 +1002,7 @@ class CompileFunction:
                 i = 0
                 new_args = [self.select_arg(arg) for arg in args]
                 for arg in new_args:
-                    instrs.append(Instr('movq', [arg, arg_passing[i]]))
+                    instrs.append(Instr('movq', [arg, CompileFunction.arg_passing[i]]))
                     i += 1
                 instrs.append(TailJump(func, i))
             case Return(exp):
@@ -1082,6 +1095,15 @@ class CompileFunction:
                     target.add(dest)
                 case JumpIf(_cc, dest):
                     target.add(dest)
+                case IndirectCallq(address, num_args): #TODO check this
+                    (read_set, write_set) = (extract_locations(
+                        CompileFunction.arg_passing[:num_args]), extract_locations(CompileFunction.caller_saved))
+                case TailJump(address, num_args): #TODO check this
+                    (read_set, write_set) = (extract_locations(
+                        CompileFunction.arg_passing[:num_args]), extract_locations(CompileFunction.caller_saved))
+                case Instr("leaq", [src, dest]): #TODO check this, should be same as move
+                    (read_set, write_set) = (extract_locations(
+                        [src]), extract_locations([dest]))
                 case _:
                     raise Exception(
                         'error in read_write_sets, unhandled' + repr(s))
@@ -1201,6 +1223,18 @@ class CompileFunction:
                         for dest in CompileFunction.caller_saved:
                             if not dest == loc:
                                 self.int_graph.add_edge(loc, dest)
+                case IndirectCallq(address, _num_args): #TODO check this, not sure if it should be the same as Callq
+                    for loc in las:
+                        for dest in CompileFunction.caller_saved:
+                            if not dest == loc:
+                                self.int_graph.add_edge(loc, dest)
+                case TailJump(_):#TODO not sure what it should be
+                    pass
+                case Instr("leaq", [src, dest]):#TODO check if this should be the same as movq or not
+                    for loc in las:
+                        self.int_graph.add_vertex(loc)
+                        if not (loc == src or loc == dest):
+                            self.int_graph.add_edge(loc, dest)
                 # trivial reads/jumps
                 case Jump(_):
                     pass
@@ -1262,7 +1296,6 @@ class CompileFunction:
         pq = PriorityQueue(less)
         for k, v in saturation_dict.items():
             pq.push(k)
-
         for _ in range(len(saturation_dict)):
             v = pq.pop()
             # skip register vertices or already assigned vars, since they've been assigned a home
@@ -1281,7 +1314,6 @@ class CompileFunction:
                     if (candidate in assign_dict) and (0 <= assign_dict[candidate] < len(self.allocatable)) and (assign_dict[candidate] not in v_saturation):
                         assign_dict[v] = assign_dict[candidate]
                         colored = True
-
             # color = 0
             (color, step) = shadow_or_stack(v)
 
@@ -1499,7 +1531,8 @@ class CompileFunction:
         # shadow stack handling
         prelude.append(Instr('movq', [Immediate(16384), Reg('rdi')]))
         prelude.append(Instr('movq', [Immediate(16384), Reg('rsi')]))
-        prelude.append(Callq('initialize', 2))
+        if self.name == "main": #TODO check this only call initialize in main
+            prelude.append(Callq('initialize', 2))
         prelude.append(Instr('movq', [Global('rootstack_begin'), Reg('r15')]))
         # "movq $0, $0(%r15)" = "movq $0, (%r15)"
         prelude.append(Instr('movq', [Immediate(0), Deref('r15', 0)]))
@@ -1522,4 +1555,4 @@ class CompileFunction:
         p.body[self.prelude_label] = prelude
         p.body[self.conclusion_label] = conclusion
 
-        return X86Program(p.body)
+        return p.body
