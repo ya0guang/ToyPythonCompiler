@@ -343,6 +343,8 @@ class CompileFunction:
         # why need this?
         self.sorted_control_flow_graph = []
         self.used_callee = set()
+        self.stack_frame_size: int
+        self.shadow_stack_size: int
 
         # Reserved registers
         self.color_reg_map = {}
@@ -1474,12 +1476,20 @@ class CompileFunction:
                     Instr('leaq', [exp, Reg('rax')]))
                 patched_instrs.append(
                     Instr('movq', [Reg('rax'), dest]))
-            case TailJump(arg, argCt) if not arg  == Reg('rax'):
+            case TailJump(arg, argCt):
                 # make sure arg is the reserved rax register
+                if arg != Reg('rax'):
+                    patched_instrs.append(
+                        Instr('movq', [arg, Reg('rax')]))
+                # pop the current frame then jump to the function (same as the code for the conclusion of a function, except the retq is replaced with jmp *arg)
                 patched_instrs.append(
-                    Instr('movq', [arg, Reg('rax')]))
+                    Instr('subq', [Immediate(self.shadow_stack_size), Reg('r15')]))
                 patched_instrs.append(
-                    TailJump(Reg('rax'), argCt))
+                    Instr('addq', [Immediate(self.stack_frame_size), Reg('rsp')]))
+                for r in reversed(self.used_callee):
+                    patched_instrs.append(Instr('popq', [r]))
+                patched_instrs.append(Instr('popq', [Reg('rbp')]))
+                patched_instrs.append(IndirectJump(Reg('rax')))
             case _:
                 patched_instrs.append(i)
             
@@ -1495,6 +1505,16 @@ class CompileFunction:
     def patch_instructions(self, p: X86Program) -> Dict:
 
         assert(type(p.body) == dict)
+        # get frame sizes for tail jumps
+        def align():
+            alignment = 8 * (len(self.used_callee) +
+                             self.normal_stack_count)  # current alignment
+            if (alignment % 16) != 0:
+                alignment += 8
+            return alignment - (8 * len(self.used_callee))
+        self.used_callee = list(self.used_callee)
+        self.stack_frame_size = align()
+        self.shadow_stack_size = self.shadow_stack_count * 8
 
         new_body = {}
 
@@ -1507,19 +1527,8 @@ class CompileFunction:
     # Prelude & Conclusion
     ############################################################################
 
-    def prelude_and_conclusion(self, p: X86Program) -> X86Program:
-
-        def align():
-            alignment = 8 * (len(self.used_callee) +
-                             self.normal_stack_count)  # current alignment
-            if (alignment % 16) != 0:
-                alignment += 8
-            return alignment - (8 * len(self.used_callee))
-
-        self.used_callee = list(self.used_callee)
-        stack_frame_size = align()
-        shadow_stack_size = self.shadow_stack_count * 8
-
+    def prelude_and_conclusion(self, p: X86Program) -> Dict:
+        
         prelude = []
         prelude.append(Instr('pushq', [Reg('rbp')]))
         prelude.append(Instr('movq', [Reg('rsp'), Reg('rbp')]))
@@ -1527,24 +1536,25 @@ class CompileFunction:
             prelude.append(Instr('pushq', [r]))
         # TODO: ignore this when sub 0
         prelude.append(
-            Instr('subq', [Immediate(stack_frame_size), Reg('rsp')]))
-        # shadow stack handling
-        prelude.append(Instr('movq', [Immediate(16384), Reg('rdi')]))
-        prelude.append(Instr('movq', [Immediate(16384), Reg('rsi')]))
-        if self.name == "main": #TODO check this only call initialize in main
+            Instr('subq', [Immediate(self.stack_frame_size), Reg('rsp')]))
+        # shadow stack handling for main
+        if self.name == "main": # TODO: may need string compare
+            prelude.append(Instr('movq', [Immediate(16384), Reg('rdi')]))
+            prelude.append(Instr('movq', [Immediate(16384), Reg('rsi')]))
             prelude.append(Callq('initialize', 2))
-        prelude.append(Instr('movq', [Global('rootstack_begin'), Reg('r15')]))
-        # "movq $0, $0(%r15)" = "movq $0, (%r15)"
+            prelude.append(Instr('movq', [Global('rootstack_begin'), Reg('r15')]))
+
+        # Zero out all locations on the root stack "movq $0, $0(%r15)" = "movq $0, (%r15)"
         prelude.append(Instr('movq', [Immediate(0), Deref('r15', 0)]))
         prelude.append(
-            Instr('addq', [Immediate(shadow_stack_size), Reg('r15')]))
-        prelude.append((Jump('start')))
+            Instr('addq', [Immediate(self.shadow_stack_size), Reg('r15')]))
+        prelude.append((Jump(self.name + 'start'))) # jump to start of function
 
         conclusion = []
         conclusion.append(
-            Instr('subq', [Immediate(shadow_stack_size), Reg('r15')]))
+            Instr('subq', [Immediate(self.shadow_stack_size), Reg('r15')]))
         conclusion.append(
-            Instr('addq', [Immediate(stack_frame_size), Reg('rsp')]))
+            Instr('addq', [Immediate(self.stack_frame_size), Reg('rsp')]))
         for r in reversed(self.used_callee):
             conclusion.append(Instr('popq', [r]))
         conclusion.append(Instr('popq', [Reg('rbp')]))
