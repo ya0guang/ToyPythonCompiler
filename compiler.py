@@ -75,13 +75,15 @@ class Compiler:
         self.function_compilers = {}
         # function -> {original_name: new_name}
         self.function_limit_renames = {}
+
+        self.num_uniquified_vars = 0
         
 
     def shrink(self, p: Module) -> Module:
         """create main function, making the module body a series of function definitions"""
         assert(isinstance(p, Module))
-        main_args = arguments([], [], [], [], [])
-        main = FunctionDef('main', args=main_args, body=[],
+        # main_args = arguments([], [], [], [], [])
+        main = FunctionDef('main', args=[], body=[],
                            decorator_list=[], returns=int)
 
         new_module = []
@@ -98,6 +100,27 @@ class Compiler:
         new_module.append(main)
         print("DEBUG, new module: ", new_module)
         return Module(new_module)
+
+    def uniquify(self, p: Module) -> Module:
+        
+        def do_uniquify(stmts: list, uniquify_mapping: dict) -> list:
+            """change the name of d"""
+            pass
+        
+        assert(isinstance(p, Module))
+
+        for f in p.body:
+            assert(isinstance(f, FunctionDef))
+            uniquify_mapping = {}
+            for v in f.args:
+                print("DEBUG, v: ", v[0], "type: ", type(v[0]))
+                uniquify_mapping[v[0]] = v[0] + "_" + str(self.num_uniquified_vars)
+                self.num_uniquified_vars += 1
+                f.body = do_uniquify(f.body, uniquify_mapping)
+        
+        return p
+
+
 
     def reveal_functions(self, p: Module) -> Module:
         """change `Name(f)` to `FunRef(f)` for functions defined in the module"""

@@ -204,12 +204,19 @@ print(p_shrinked)
 print("\n======= interpreting shrinked program")
 interp.interp(p_shrinked)
 
+# print("\n======= uniquify program")
+# p_uniquifid = compiler.uniquify(p_shrinked)
+# print(p_uniquifid)
+# print("\n======= interpreting uniquifid program")
+# interp.interp(p_uniquifid)
+
 print("\n======= reveal functions")
 p_revealed = compiler.reveal_functions(p_shrinked)
 print(p_revealed)
 
 print("\n======= reveal functions AST")
-print(ast.dump(p_revealed))
+# print(ast.dump(p_revealed))
+print(p_revealed.__repr__())
 
 print("\n======= interpreting revealed functions program")
 interp.interp(p_revealed)
