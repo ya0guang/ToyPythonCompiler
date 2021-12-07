@@ -9,11 +9,14 @@ import interp_Cfun
 from interp_x86 import eval_x86
 
 prog = """
-def sum(x:int,s:int)-> int :
-  return (s if x == 0 else sum(x - 1, x + s))
-n = input_int()
-print(sum(n, 0) + 36)
+def id(f:Callable[([int],int,)])-> Callable[([int],int,)] :
+  return f
+def inc(x:int)-> int :
+  return x + 1
+print(id(inc)(41))
 """
+
+
 
 # prog = """
 # def sum(a:int,b:int,c:int,d:int,e:int,f:int,g:int,h:int)-> int :
@@ -232,7 +235,7 @@ type_check_Lfun.TypeCheckLfun().type_check(p_limited)
 p_rcoed = compiler.remove_complex_operands(p_limited)
 
 print("\n======= RCOed program AST")
-print(ast.dump(p_rcoed))
+print(p_rcoed.__repr__())
 
 print("\n======= printing RCOed program")
 print(p_rcoed)

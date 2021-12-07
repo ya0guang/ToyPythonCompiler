@@ -512,6 +512,7 @@ class CompileFunction:
                 temps = var_temps + idx_temps
             case Call(funRef, args):
                 (funRef_rcoed, funRef_temps) = self.rco_exp(funRef, True)
+                print("DEBUG, in rco_exp, call match case: ", funRef_rcoed)
                 args_rcoed = []
                 args_temps = []
                 for arg in args:  # make sure all args are atomic
