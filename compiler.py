@@ -282,12 +282,6 @@ class Compiler:
             assert(isinstance(f, FunctionDef))
             f.body = self.function_compilers[f.name].patch_instructions(X86Program(f.body))
         return X86ProgramDefs(p.defs)
-        # assert(isinstance(p, X86ProgramDefs))
-        # for f in p.defs:
-        #     assert(isinstance(f, FunctionDef))
-        #     f.body = self.function_compilers[f.name].patch_instructions(X86Program(f.body))
-        # return X86ProgramDefs(p.defs)
-        pass
 
     def prelude_and_conclusion(self, p: X86ProgramDefs) -> X86Program:
         assert(isinstance(p, X86ProgramDefs))
@@ -391,10 +385,11 @@ class CompileFunction:
 
         tup_bytes = (len(content) + 1) * 8
 
-        # TODO: may need constant(tup_bytes)
         if_cond = Compare(BinOp(GlobalValue('free_ptr'), Add(), Constant(tup_bytes)), [
                           Lt()], [GlobalValue('fromspace_end')])
-        body.append(If(if_cond, [Expr(Constant(0))], [Collect(tup_bytes)]))
+
+        # TODO: Expr(Constant(0)) OK here?
+        body.append(If(if_cond, [], [Collect(tup_bytes)]))
 
         var = Name("pyc_temp_tup_" + str(self.tup_temp_count))
         body.append(Assign([var], Allocate(len(content), t.has_type)))
@@ -672,10 +667,6 @@ class CompileFunction:
                 self.temp_count += 1
                 return [Assign([var], cnd)] + self.explicate_pred(var, thn, els)
             case UnaryOp(Not(), operand):
-                # return [If(UnaryOp(Not(), operand),
-                #     [Goto(self.create_block(thn))],
-                #     [Goto(self.create_block(els))])]
-                # change to a compare here
                 return [If(Compare(operand, [Eq()], [Constant(False)]),
                            [self.create_block(thn)],
                            [self.create_block(els)])]
@@ -833,7 +824,6 @@ class CompileFunction:
                 # if ts[i] is Tuple:
                 #     # Do something to tag here
                 #     print("DEBUG: hit Tuple")
-                #     pass
                 match ts[i]:
                     case TupleType(nest_ts):
                         # Do something to tag here
@@ -924,6 +914,8 @@ class CompileFunction:
                 instrs.append(
                     Instr('movq', [Global(var), Variable("Unnamed_Pyc_Var")]))
                 # instrs.append(Global(var))
+            case FunRef(f):
+                instrs.append(Instr('leaq', [FunRef(f), Variable("Unnamed_Pyc_Var")]))
             case Call(Name(func), args):
                 i = 0
                 new_args = [self.select_arg(arg) for arg in args]
@@ -932,6 +924,8 @@ class CompileFunction:
                     i += 1
                 # TODO: what if not an indirect call?
                 instrs.append(IndirectCallq(Variable(func), i))
+                # TODO: what if nothing returned? Delete "Unnamed_Pyc_Var" instructions
+                instrs.append(Instr('movq', [Reg('rax'), Variable("Unnamed_Pyc_Var")]))
             case _:
                 instrs.append(
                     Instr('movq', [self.select_arg(e), Variable("Unnamed_Pyc_Var")]))
@@ -986,13 +980,7 @@ class CompileFunction:
             case Expr(exp):
                 instrs += self.select_expr(exp)
             case Assign([Name(var)], exp):
-                if isinstance(exp, FunRef):
-                    instrs.append(Instr('leaq', [exp, Variable(var)]))
-                elif isinstance(exp, Call):
-                    instrs += self.select_expr(exp)
-                    instrs.append(Instr('movq', [Reg('rax'), Variable(var)]))
-                else:
-                    instrs += bound_unamed(self.select_expr(exp), var)
+                instrs += bound_unamed(self.select_expr(exp), var)
             case Assign([Subscript(tup, idx, Store())], exp):
                 instrs.append(
                     Instr('movq', [self.select_arg(tup), Reg('r11')]))
@@ -1105,12 +1093,12 @@ class CompileFunction:
                     target.add(dest)
                 case JumpIf(_cc, dest):
                     target.add(dest)
-                case IndirectCallq(address, num_args): #TODO check this
+                case IndirectCallq(address, num_args):
                     (read_set, write_set) = (extract_locations(
-                        CompileFunction.arg_passing[:num_args]), extract_locations(CompileFunction.caller_saved))
-                case TailJump(address, num_args): #TODO check this
+                        CompileFunction.arg_passing[:num_args] + [address]), extract_locations(CompileFunction.caller_saved))
+                case TailJump(address, num_args):
                     (read_set, write_set) = (extract_locations(
-                        CompileFunction.arg_passing[:num_args]), extract_locations(CompileFunction.caller_saved))
+                        CompileFunction.arg_passing[:num_args] + [address]), extract_locations(CompileFunction.caller_saved))
                 case Instr("leaq", [src, dest]): #TODO check this, should be same as move'
                     print("DEBUG: hit leaq")
                     (read_set, write_set) = (extract_locations(
@@ -1157,22 +1145,6 @@ class CompileFunction:
         mapping = analyze_dataflow(
             self.control_flow_graph, transfer, set(), join)
 
-        # for label in topological_sort(transpose(self.control_flow_graph)):
-        #     # conclusion block may not exist early
-        #     if label in self.basic_blocks:
-        #         block = self.basic_blocks[label]
-        #     else:
-        #         continue
-        #     last_set = set()
-        #     for out in self.control_flow_graph.out[label]:
-        #         # conclusion block may not exist early
-        #         if out in self.basic_blocks:
-        #             last_set = last_set.union(self.live_before_set_dict[self.basic_blocks[out][0]])
-        #     for ins in reversed(block):
-        #         self.live_after_set_dict[ins] = last_set
-        #         self.live_before_set_dict[ins] = last_set.difference(self.write_set_dict[ins]).union(self.read_set_dict[ins])
-        #         last_set = self.live_before_set_dict[ins]
-
         print(mapping)
         self.live_before_block = mapping
 
@@ -1196,9 +1168,6 @@ class CompileFunction:
     def build_interference(self, las_dict: Dict[instr, set]) -> bool:
         """store the interference graph in member, `self.int_graph`"""
         for ins, las in las_dict.items():
-            # for i in range(len(ins_list)):
-            #     ins = ins_list[i]  # instruction
-            #     las = las_list[i]  # live-after set
             match ins:
                 case Instr("movq", [src, dest]):
                     for loc in las:
@@ -1412,6 +1381,7 @@ class CompileFunction:
                 self.normal_stack_count += 1
 
         for vertex, color in shadow_stack.items():
+            # TODO: may not be right
             # spill all
             offset = int(color.imag - 1)
             result[vertex] = Deref(
