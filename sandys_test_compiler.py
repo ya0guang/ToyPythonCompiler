@@ -21,6 +21,11 @@ import interp_Cif
 import interp_Pvar
 from interp_x86 import eval_x86
 
+import type_check_Llambda
+import type_check_Clambda
+import interp_Llambda
+import interp_Clambda
+
 # test program here
 # prog = """
 # a = 20 + - 30
@@ -349,10 +354,13 @@ n = 7
 print(sum(n, 0) + 36)
 """
 
-def sum(x:int,s:int)-> int :
-    return (s if x == 0 else sum(x - 1, x + s))
-n = 7
-print(sum(n, 0) + 36)
+we_be_buggin = """
+def map(f : Callable[[int], int], v : tuple[int,int]) -> tuple[int,int]:
+    return f(v[0]), f(v[1])
+def inc(x : int) -> int:
+    return x + 1
+print( map(inc, (0, 41))[1] )
+"""
 
 
 progs = [IfElseProg, nestedIfsProg2, whileCaseFromBook, while_while, while_from_class, simple_tuple]
@@ -364,10 +372,14 @@ prog = tail_if_fun
 # Run
 ############################################################################
 
-interp = interp_Lfun.InterpLfun()
+interp = interp_Llambda.InterpLlambda()
 # interp = interp_Ltup.InterpLtup()
 # interp = interp_Pif.InterpPif()
 # interp = interp_Pvar.InterpPvar()
+interp_C = interp_Clambda.InterpClambda()
+
+typeCheck_L = type_check_Llambda.TypeCheckLlambda()
+typeCheck_C = type_check_Clambda.TypeCheckClambda()
 
 def run1(prog):
 
@@ -376,7 +388,7 @@ def run1(prog):
     print("\n======= AST of the original program")
     print(p)
 
-    type_check_Lfun.TypeCheckLfun().type_check(p)
+    typeCheck_L.type_check(p)
     print("\n======= type check passes")
 
     # print("\n======= interpreting original program")
@@ -409,7 +421,7 @@ def run1(prog):
 
     print("\n======= interpreting limit functions program")
     interp.interp(p_limited)
-    type_check_Lfun.TypeCheckLfun().type_check(p_limited)
+    typeCheck_L.type_check(p_limited)
 
     print("\n======= doing RCO")
     p_rcoed = compiler.remove_complex_operands(p_limited)
@@ -430,12 +442,11 @@ def run1(prog):
     print(p_exped)
 
     print("\n======= type checking EXPed program")
-    type_check_Cfun.TypeCheckCfun().type_check(p_exped)
+    typeCheck_C.type_check(p_exped)
 
 
     print("\n======= interpreting EXPed program")
-    cif_interp = interp_Cfun.InterpCfun()
-    cif_interp.interp(p_exped)
+    interp_C.interp(p_exped)
 
     print("\n======= selecting instructions")
     p_x64 = compiler.select_instructions(p_exped)
