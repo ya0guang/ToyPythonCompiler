@@ -131,12 +131,14 @@ class Compiler:
                 self.outer_instance = outer
                 super().__init__()
 
-            def visit_Call(self, node):
+            def visit_Name(self, node):
                 self.generic_visit(node)
                 match node:
-                    case Call(Name(f), args) if f in self.outer_instance.functions:
+                    case Name(f) if f in self.outer_instance.functions:
+                        # TODO: iterable `FunRef`
                         # what if f is a builtin function? guard needed
-                        return Call(FunRef(f), args)
+                        self.generic_visit(node)
+                        return FunRef(f)
                     case _:
                         return node
 
@@ -148,7 +150,7 @@ class Compiler:
         for f in p.body:
             new_body = []
             for s in f.body:
-                new_line = RevealFunction(self).visit_Call(s)
+                new_line = RevealFunction(self).visit_Name(s)
                 new_body.append(new_line)
                 # print("DEBUG, new node: ", ast.dump(n))
             f.body = new_body
@@ -291,9 +293,18 @@ class Compiler:
 
         # print("finished assigning homes")
         # return X86ProgramDefs(p.defs)
-        pass
+        assert(isinstance(p, X86ProgramDefs))
+        for f in p.defs:
+            assert(isinstance(f, FunctionDef))
+            f.body = self.function_compilers[f.name].assign_homes(X86Program(f.body))
+        return X86ProgramDefs(p.defs)
 
-    def patch_instructions(self, p: X86Program) -> X86Program:
+    def patch_instructions(self, p: X86ProgramDefs) -> X86ProgramDefs:
+        assert(isinstance(p, X86ProgramDefs))
+        for f in p.defs:
+            assert(isinstance(f, FunctionDef))
+            f.body = self.function_compilers[f.name].patch_instructions(X86Program(f.body))
+        return X86ProgramDefs(p.defs)
         # assert(isinstance(p, X86ProgramDefs))
         # for f in p.defs:
         #     assert(isinstance(f, FunctionDef))
@@ -301,8 +312,16 @@ class Compiler:
         # return X86ProgramDefs(p.defs)
         pass
 
-    def prelude_and_conclusion(self, p: X86Program) -> X86Program:
-        pass
+    def prelude_and_conclusion(self, p: X86ProgramDefs) -> X86Program:
+        assert(isinstance(p, X86ProgramDefs))
+        new_body = {}
+        for f in p.defs:
+            assert(isinstance(f, FunctionDef))
+            f.body = self.function_compilers[f.name].prelude_and_conclusion(X86Program(f.body))
+            # print("DEBUG, f.body: ", f.body)
+            new_body.update(f.body)
+
+        return X86Program(new_body)
 
 
 class CompileFunction:
@@ -353,6 +372,8 @@ class CompileFunction:
         # why need this?
         self.sorted_control_flow_graph = []
         self.used_callee = set()
+        self.stack_frame_size: int
+        self.shadow_stack_size: int
 
         # Reserved registers
         self.color_reg_map = {}
@@ -516,6 +537,7 @@ class CompileFunction:
                 temps = var_temps + idx_temps
             case Call(funRef, args):
                 (funRef_rcoed, funRef_temps) = self.rco_exp(funRef, True)
+                print("DEBUG, in rco_exp, call match case: ", funRef_rcoed)
                 args_rcoed = []
                 args_temps = []
                 for arg in args:  # make sure all args are atomic
@@ -925,13 +947,14 @@ class CompileFunction:
                 instrs.append(
                     Instr('movq', [Global(var), Variable("Unnamed_Pyc_Var")]))
                 # instrs.append(Global(var))
-            case Call(func, args):
+            case Call(Name(func), args):
                 i = 0
                 new_args = [self.select_arg(arg) for arg in args]
                 for arg in new_args:
-                    instrs.append(Instr('movq', [arg, arg_passing[i]]))
+                    instrs.append(Instr('movq', [arg, CompileFunction.arg_passing[i]]))
                     i += 1
-                instrs.append(IndirectCallq(func, i))
+                # TODO: what if not an indirect call?
+                instrs.append(IndirectCallq(Variable(func), i))
             case _:
                 instrs.append(
                     Instr('movq', [self.select_arg(e), Variable("Unnamed_Pyc_Var")]))
@@ -1007,14 +1030,14 @@ class CompileFunction:
                 instrs.append(Instr('movq', [Immediate(bytes), Reg('rsi')]))
                 instrs.append(Callq('collect', 2))
                 # how many args? 2?
-            case TailCall(func, args):
+            case TailCall(Name(func), args):
                 print("TAIL CALL")
                 i = 0
                 new_args = [self.select_arg(arg) for arg in args]
                 for arg in new_args:
-                    instrs.append(Instr('movq', [arg, arg_passing[i]]))
+                    instrs.append(Instr('movq', [arg, CompileFunction.arg_passing[i]]))
                     i += 1
-                instrs.append(TailJump(func, i))
+                instrs.append(TailJump(Variable(func), i))
             case Return(exp):
                 instrs += bound_unamed(self.select_expr(exp), Reg('rax'))
                 instrs.append(Jump(self.conclusion_label))
@@ -1105,6 +1128,16 @@ class CompileFunction:
                     target.add(dest)
                 case JumpIf(_cc, dest):
                     target.add(dest)
+                case IndirectCallq(address, num_args): #TODO check this
+                    (read_set, write_set) = (extract_locations(
+                        CompileFunction.arg_passing[:num_args]), extract_locations(CompileFunction.caller_saved))
+                case TailJump(address, num_args): #TODO check this
+                    (read_set, write_set) = (extract_locations(
+                        CompileFunction.arg_passing[:num_args]), extract_locations(CompileFunction.caller_saved))
+                case Instr("leaq", [src, dest]): #TODO check this, should be same as move'
+                    print("DEBUG: hit leaq")
+                    (read_set, write_set) = (extract_locations(
+                        [src]), extract_locations([dest]))
                 case _:
                     raise Exception(
                         'error in read_write_sets, unhandled' + repr(s))
@@ -1224,6 +1257,18 @@ class CompileFunction:
                         for dest in CompileFunction.caller_saved:
                             if not dest == loc:
                                 self.int_graph.add_edge(loc, dest)
+                case IndirectCallq(address, _num_args): #TODO check this, not sure if it should be the same as Callq
+                    for loc in las:
+                        for dest in CompileFunction.caller_saved:
+                            if not dest == loc:
+                                self.int_graph.add_edge(loc, dest)
+                case TailJump(_):#TODO not sure what it should be
+                    pass
+                case Instr("leaq", [src, dest]):#TODO check if this should be the same as movq or not
+                    for loc in las:
+                        self.int_graph.add_vertex(loc)
+                        if not (loc == src or loc == dest):
+                            self.int_graph.add_edge(loc, dest)
                 # trivial reads/jumps
                 case Jump(_):
                     pass
@@ -1285,7 +1330,6 @@ class CompileFunction:
         pq = PriorityQueue(less)
         for k, v in saturation_dict.items():
             pq.push(k)
-
         for _ in range(len(saturation_dict)):
             v = pq.pop()
             # skip register vertices or already assigned vars, since they've been assigned a home
@@ -1304,7 +1348,6 @@ class CompileFunction:
                     if (candidate in assign_dict) and (0 <= assign_dict[candidate] < len(self.allocatable)) and (assign_dict[candidate] not in v_saturation):
                         assign_dict[v] = assign_dict[candidate]
                         colored = True
-
             # color = 0
             (color, step) = shadow_or_stack(v)
 
@@ -1333,6 +1376,7 @@ class CompileFunction:
         if a in home.keys():
             return home[a]
         else:
+            print("WARNING: home not found for a in assign_homes_arg", a.__repr__())
             return a
 
     def assign_homes_instr(self, i: instr,
@@ -1343,7 +1387,15 @@ class CompileFunction:
                 for a in args:
                     new_args.append(self.assign_homes_arg(a, home))
                 return Instr(oprtr, new_args)
+            case IndirectCallq(func, num_args):
+                new_func = self.assign_homes_arg(func, home)
+                print("DEBUG, IndirectCallq case in assign_homes_instr, new_func: ")
+                return IndirectCallq(new_func, num_args)
+            case TailJump(func, num_args):
+                new_func = self.assign_homes_arg(func, home)
+                return TailJump(new_func, num_args)
             case other:
+                print("WARNING, hit wild case in assign_homes_instr: ", other.__repr__())
                 return other
 
     def assign_homes_instrs(self, basic_blocks: Dict[str, List[instr]],
@@ -1465,12 +1517,20 @@ class CompileFunction:
                     Instr('leaq', [exp, Reg('rax')]))
                 patched_instrs.append(
                     Instr('movq', [Reg('rax'), dest]))
-            case TailJump(arg, argCt) if not arg  == Reg('rax'):
+            case TailJump(arg, argCt):
                 # make sure arg is the reserved rax register
+                if arg != Reg('rax'):
+                    patched_instrs.append(
+                        Instr('movq', [arg, Reg('rax')]))
+                # pop the current frame then jump to the function (same as the code for the conclusion of a function, except the retq is replaced with jmp *arg)
                 patched_instrs.append(
-                    Instr('movq', [arg, Reg('rax')]))
+                    Instr('subq', [Immediate(self.shadow_stack_size), Reg('r15')]))
                 patched_instrs.append(
-                    TailJump(Reg('rax'), argCt))
+                    Instr('addq', [Immediate(self.stack_frame_size), Reg('rsp')]))
+                for r in reversed(self.used_callee):
+                    patched_instrs.append(Instr('popq', [r]))
+                patched_instrs.append(Instr('popq', [Reg('rbp')]))
+                patched_instrs.append(IndirectJump(Reg('rax')))
             case _:
                 patched_instrs.append(i)
             
@@ -1486,6 +1546,16 @@ class CompileFunction:
     def patch_instructions(self, p: X86Program) -> Dict:
 
         assert(type(p.body) == dict)
+        # get frame sizes for tail jumps
+        def align():
+            alignment = 8 * (len(self.used_callee) +
+                             self.normal_stack_count)  # current alignment
+            if (alignment % 16) != 0:
+                alignment += 8
+            return alignment - (8 * len(self.used_callee))
+        self.used_callee = list(self.used_callee)
+        self.stack_frame_size = align()
+        self.shadow_stack_size = self.shadow_stack_count * 8
 
         new_body = {}
 
@@ -1498,19 +1568,8 @@ class CompileFunction:
     # Prelude & Conclusion
     ############################################################################
 
-    def prelude_and_conclusion(self, p: X86Program) -> X86Program:
-
-        def align():
-            alignment = 8 * (len(self.used_callee) +
-                             self.normal_stack_count)  # current alignment
-            if (alignment % 16) != 0:
-                alignment += 8
-            return alignment - (8 * len(self.used_callee))
-
-        self.used_callee = list(self.used_callee)
-        stack_frame_size = align()
-        shadow_stack_size = self.shadow_stack_count * 8
-
+    def prelude_and_conclusion(self, p: X86Program) -> Dict:
+        
         prelude = []
         prelude.append(Instr('pushq', [Reg('rbp')]))
         prelude.append(Instr('movq', [Reg('rsp'), Reg('rbp')]))
@@ -1518,23 +1577,25 @@ class CompileFunction:
             prelude.append(Instr('pushq', [r]))
         # TODO: ignore this when sub 0
         prelude.append(
-            Instr('subq', [Immediate(stack_frame_size), Reg('rsp')]))
-        # shadow stack handling
-        prelude.append(Instr('movq', [Immediate(16384), Reg('rdi')]))
-        prelude.append(Instr('movq', [Immediate(16384), Reg('rsi')]))
-        prelude.append(Callq('initialize', 2))
-        prelude.append(Instr('movq', [Global('rootstack_begin'), Reg('r15')]))
-        # "movq $0, $0(%r15)" = "movq $0, (%r15)"
+            Instr('subq', [Immediate(self.stack_frame_size), Reg('rsp')]))
+        # shadow stack handling for main
+        if self.name == "main": # TODO: may need string compare
+            prelude.append(Instr('movq', [Immediate(16384), Reg('rdi')]))
+            prelude.append(Instr('movq', [Immediate(16384), Reg('rsi')]))
+            prelude.append(Callq('initialize', 2))
+            prelude.append(Instr('movq', [Global('rootstack_begin'), Reg('r15')]))
+
+        # Zero out all locations on the root stack "movq $0, $0(%r15)" = "movq $0, (%r15)"
         prelude.append(Instr('movq', [Immediate(0), Deref('r15', 0)]))
         prelude.append(
-            Instr('addq', [Immediate(shadow_stack_size), Reg('r15')]))
-        prelude.append((Jump('start')))
+            Instr('addq', [Immediate(self.shadow_stack_size), Reg('r15')]))
+        prelude.append((Jump(self.name + 'start'))) # jump to start of function
 
         conclusion = []
         conclusion.append(
-            Instr('subq', [Immediate(shadow_stack_size), Reg('r15')]))
+            Instr('subq', [Immediate(self.shadow_stack_size), Reg('r15')]))
         conclusion.append(
-            Instr('addq', [Immediate(stack_frame_size), Reg('rsp')]))
+            Instr('addq', [Immediate(self.stack_frame_size), Reg('rsp')]))
         for r in reversed(self.used_callee):
             conclusion.append(Instr('popq', [r]))
         conclusion.append(Instr('popq', [Reg('rbp')]))
@@ -1545,4 +1606,4 @@ class CompileFunction:
         p.body[self.prelude_label] = prelude
         p.body[self.conclusion_label] = conclusion
 
-        return X86Program(p.body)
+        return p.body

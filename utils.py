@@ -468,12 +468,13 @@ class FunctionType:
             result = result and t1 == t2
         return result and self.ret_type == other.ret_type
     
-class FunRef:
+class FunRef(expr):
     __match_args__ = ("name",)
     def __init__(self, name):
         self.name = name
     def __str__(self):
-        return '{' + self.name + '}'
+        # TODO: this needs a repair
+        return self.name + '(%rip)'
     def __repr__(self):
         return 'FunRef(' + self.name + ')'
 

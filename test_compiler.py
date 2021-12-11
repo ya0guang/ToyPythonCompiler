@@ -9,14 +9,20 @@ import interp_Cfun
 from interp_x86 import eval_x86
 
 prog = """
-
-def sum(a:int,b:int,c:int,d:int,e:int,f:int,g:int,h:int)-> int :
-    return a + b + c + d + e + f + g + h
-
-print(sum(5, 5, 5, 5, 5, 5, 5, 7))
-
+def id(f:Callable[([int],int,)])-> Callable[([int],int,)] :
+  return f
+def inc(x:int)-> int :
+  return x + 1
+print(id(inc)(41))
 """
 
+
+
+# prog = """
+# def sum(a:int,b:int,c:int,d:int,e:int,f:int,g:int,h:int)-> int :
+#     return a + b + c + d + e + f + g + h
+# print(sum(5, 5, 5, 5, 5, 5, 5, 7))
+# """
 
 # prog ="""
 # x = input_int()
@@ -236,7 +242,7 @@ type_check_Lfun.TypeCheckLfun().type_check(p_limited)
 p_rcoed = compiler.remove_complex_operands(p_limited)
 
 print("\n======= RCOed program AST")
-print(ast.dump(p_rcoed))
+print(p_rcoed.__repr__())
 
 print("\n======= printing RCOed program")
 print(p_rcoed)
@@ -250,6 +256,10 @@ print("\n======= printing EXPed program")
 p_exped = compiler.explicate_control(p_rcoed)
 print(p_exped)
 
+print("\n======= printing EXPed program AST")
+print(p_exped.__repr__())
+
+
 print("\n======= type checking EXPed program")
 type_check_Cfun.TypeCheckCfun().type_check(p_exped)
 
@@ -258,32 +268,39 @@ print("\n======= interpreting EXPed program")
 cif_interp = interp_Cfun.InterpCfun()
 cif_interp.interp(p_exped)
 
-print("\n======= selecting instructions")
+print("\n======= selecting instructions\n")
 p_x64 = compiler.select_instructions(p_exped)
+
+print("\n======= printing x64 program AST")
+print(p_x64.__repr__())
+
+print("\n======= printing x64 program")
 print(p_x64)
+
+
 
 # print("\n======= evaluating x86 program")
 # eval_x86.interp_x86(p_x64)
 
-print("\n======= uncovering live after sets")
-las = compiler.uncover_live(p_x64)
-for (label, block) in p_x64.body.items():
-    print(label)
-    for s in block:
-        print(repr(s) + '\t' + str(las[s]))
+# print("\n======= uncovering live after sets")
+# las = compiler.uncover_live(p_x64)
+# for (label, block) in p_x64.body.items():
+#     print(label)
+#     for s in block:
+#         print(repr(s) + '\t' + str(las[s]))
 
-print("\n======= building interference graph")
-las_dict = compiler.uncover_live(p_x64)
-rv = compiler.build_interference(las_dict)
-print(compiler.int_graph.show())
+# print("\n======= building interference graph")
+# las_dict = compiler.uncover_live(p_x64)
+# rv = compiler.build_interference(las_dict)
+# print(compiler.int_graph.show())
 
-print("\n======= building move graph")
-rv = compiler.build_move_graph(p_x64.body)
-print(compiler.move_graph.show())
+# print("\n======= building move graph")
+# rv = compiler.build_move_graph(p_x64.body)
+# print(compiler.move_graph.show())
 
-print("\n======= graph coloring")
-coloring = compiler.color_graph(compiler.int_graph)
-print(coloring)
+# print("\n======= graph coloring")
+# coloring = compiler.color_graph(compiler.int_graph)
+# print(coloring)
 
 print("\n======= assigning homes")
 p_x64_reg = compiler.assign_homes(p_x64)
