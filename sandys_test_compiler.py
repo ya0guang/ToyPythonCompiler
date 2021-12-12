@@ -362,10 +362,19 @@ def inc(x : int) -> int:
 print( map(inc, (0, 41))[1] )
 """
 
+lambda_examp = """
+def f(x:int, y:int) -> Callable[[int], int]:
+    g : Callable[[int],int] = (lambda x: x + y)
+    h : Callable[[int],int] = (lambda y: x + y)
+    x = 3
+    return g
+print(f(0, 10)(32))
+"""
+
 
 progs = [IfElseProg, nestedIfsProg2, whileCaseFromBook, while_while, while_from_class, simple_tuple]
 
-prog = tail_if_fun
+prog = lambda_examp
 
 
 ############################################################################
@@ -412,8 +421,15 @@ def run1(prog):
     print("\n======= interpreting revealed functions program")
     interp.interp(p_revealed)
 
+    print("\n======= uniquifying program")
+    p_unique = compiler.uniquify(p_revealed)
+    print("\n printing uniquified prog")
+    print(p_unique)
+    print("\n======= interpreting unique program")
+    interp.interp(p_unique)
+
     print("\n======= limit functions")
-    p_limited = compiler.limit_functions(p_revealed)
+    p_limited = compiler.limit_functions(p_unique)
     print(p_limited)
 
     print("\n======= limit functions AST")

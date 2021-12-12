@@ -102,21 +102,141 @@ class Compiler:
         return Module(new_module)
 
     def uniquify(self, p: Module) -> Module:
+        class Uniquify(NodeTransformer):
+            def __init__(self, outer: Compiler):
+                self.outer_instance = outer
+                super().__init__()
+                self.uniquify_mapping: dict
+                self.num_uniquified_vars: int
+
+            def uniq_exp(self, e: expr, lambda_mappings={}):
+                # print("uni_exp: " + repr(e))
+                match e:
+                    # `and` & `or`
+                    case BoolOp(op, args):
+                        u_args = [self.uniq_exp(args[0]), self.uniq_exp(args[1])]
+                        return BoolOp(op, u_args)
+                    case Tuple(args, Load()):
+                        u_args = [self.uniq_exp(arg) for arg in args]
+                        # TODO: may not be able to create the tuple in the next statement
+                        return Tuple(u_args, Load())
+                    case Begin(body, result):
+                        new_body = [
+                            new_stat for s in body for new_stat in self.uniquify_stat(s)]
+                        return Begin(new_body, result)
+                    case UnaryOp(uniop, exp):
+                        # `Not()` and `USub`
+                        u_exp = self.uniq_exp(exp)
+                        return UnaryOp(uniop, u_exp)
+                    case BinOp(exp1, binop, exp2):
+                        """Sub() and Add()"""
+                        u_exp1 = self.uniq_exp(exp1)
+                        u_exp2 = self.uniq_exp(exp2)
+                        return BinOp(u_exp1, binop, u_exp2)
+                    case Compare(left, [cmp], [right]):
+                        # similar to `BinOp` case
+                        u_left = self.uniq_exp(left)
+                        u_right = self.uniq_exp(right)
+                        return Compare(u_left, [cmp], [u_right])
+                    case IfExp(exp_test, exp_body, exp_else):
+                        u_test = self.uniq_exp(exp_test)
+                        u_body = self.uniq_exp(exp_body)
+                        u_else = self.uniq_exp(exp_else)
+                        return IfExp(u_test, u_body, u_else)
+                    case Call(Name('input_int'), []):
+                        return e
+                    case Call(fun, args):
+                        u_fun = self.uniq_exp(fun)
+                        u_args = [self.uniq_exp(arg) for arg in args]
+                        return Call(u_fun, u_args)
+                    case Subscript(var, idx, Load()):
+                        u_var = self.uniq_exp(var)
+                        u_idx = self.uniq_exp(idx)
+                        return Subscript(u_var, u_idx, Load())
+                    case Name(var):
+                        u_var = lambda_mappings[var] if var in lambda_mappings else self.uniquify_mapping[var] 
+                        return Name(u_var)
+                    case Lambda(vars, exp):
+                        uniq_lambda_mappings = {}
+                        u_vars = []
+                        for var in vars:
+                            uniq_lambda_mappings[var] = var + "_" + str(self.num_uniquified_vars)
+                            self.num_uniquified_vars += 1
+                            u_vars.append(uniq_lambda_mappings[var])
+                        u_exp = self.uniq_exp(exp, uniq_lambda_mappings)
+                        return Lambda(u_vars, u_exp)
+                    case _:
+                        print("unhandled in uniq_exp: " + repr(e))
+                        return e
+
+            def uniquify_stat(self, s: stmt):
+                # print("uni_stat: " + repr(s))
+                new_stat = []
+                match s:
+                    case Expr(Call(Name('print'), [exp])):
+                        u_exp = self.uniq_exp(exp)
+                        new_stat.append(Expr(Call(Name('print'), [u_exp])))
+                    case Expr(exp):
+                        u_exp = self.uniq_exp(exp)
+                        new_stat.append(Expr(u_exp))
+                    case Assign([Name(var)], exp):
+                        if var not in self.uniquify_mapping:
+                            self.uniquify_mapping[var] = var + "_" + str(self.num_uniquified_vars)
+                            self.num_uniquified_vars += 1
+                        u_var = self.uniquify_mapping[var]
+                        u_exp = self.uniq_exp(exp)
+                        new_stat.append(Assign([Name(u_var)], u_exp))
+                    case If(exp, stmts_body, stmts_else):
+                        # need test
+                        u_exp = self.uniq_exp(exp)
+                        u_body = [
+                            new_stat for s in stmts_body for new_stat in self.uniquify_stat(s)]
+                        u_else = [
+                            new_stat for s in stmts_else for new_stat in self.uniquify_stat(s)]
+                        new_stat.append(If(u_exp, u_body, u_else))
+                    case While(exp, stmts_body, []):
+                        u_exp = self.uniq_exp(exp)
+                        u_body = [
+                            new_stat for s in stmts_body for new_stat in self.uniquify_stat(s)]
+                        new_stat.append(While(u_exp, u_body, []))
+                    case Collect(bytes):
+                        # TODO: ???
+                        new_stat.append(s)
+                    case Assign([Subscript(var, idx, Store())], exp):
+                        u_var = self.uniq_exp(var)
+                        u_idx = self.uniq_exp(idx)
+                        u_exp = self.uniq_exp(exp)
+                        new_stat.append(Assign(
+                            [Subscript(u_var, u_idx, Store())], u_exp))
+                    case Return(exp):
+                        u_exp = self.uniq_exp(exp)
+                        new_stat.append(Return(u_exp))
+                    case _:
+                        raise Exception(
+                            'error in rco_stmt, stmt not supported ' + repr(s))    
+                return new_stat 
+            def do_uniquify(self, stmts: list, uniquify_mapping: dict, num_uniquified_vars: int) -> list:
+                """change the name of d"""
+                self.uniquify_mapping = uniquify_mapping
+                self.num_uniquified_vars = num_uniquified_vars
+                new_stats = [new_stat for s in stmts for new_stat in self.uniquify_stat(s)]
+                return new_stats
         
-        def do_uniquify(stmts: list, uniquify_mapping: dict) -> list:
-            """change the name of d"""
-            pass
         
         assert(isinstance(p, Module))
 
         for f in p.body:
-            assert(isinstance(f, FunctionDef))
             uniquify_mapping = {}
+            new_args = []
             for v in f.args:
-                print("DEBUG, v: ", v[0], "type: ", type(v[0]))
+                # print("name: " + repr(v[0])) if isinstance(v[0], Name) else print("not name: " + repr(v[0]) + "\ttype: " + str(type(v[0])))
+                # print("DEBUG, v: ", v[0], "type: ", type(v[0]))
                 uniquify_mapping[v[0]] = v[0] + "_" + str(self.num_uniquified_vars)
                 self.num_uniquified_vars += 1
-                f.body = do_uniquify(f.body, uniquify_mapping)
+                new_args.append((uniquify_mapping[v[0]], v[1]))
+
+            f.body = Uniquify(self).do_uniquify(f.body, uniquify_mapping, self.num_uniquified_vars)
+            f.args = new_args
         
         return p
 
@@ -393,6 +513,119 @@ class CompileFunction:
             case _:
                 raise Exception(
                     'error in extend_reg, unsupported register name ' + repr(r))
+    ############################################################################
+    # Uniquify
+    ############################################################################
+    # def uniq_exp(self, e: expr):
+    #     match e:
+    #         # `and` & `or`
+    #         case BoolOp(op, args):
+    #             u_args = [self.uniq_exp(args[0]), self.uniq_exp(args[1])]
+    #             return BoolOp(op, u_args)
+    #         case Tuple(args, Load()):
+    #             u_args = [self.uniq_exp(arg) for arg in args]
+    #             # TODO: may not be able to create the tuple in the next statement
+    #             return Tuple(u_args, Load())
+    #         case Begin(body, result):
+    #             new_body = [
+    #                 new_stat for s in body for new_stat in self.uniquify_stat(s)]
+    #             return Begin(new_body, result)
+    #         case UnaryOp(uniop, exp):
+    #             # `Not()` and `USub`
+    #             u_exp = self.uniq_exp(exp)
+    #             return UnaryOp(uniop, u_exp)
+    #         case BinOp(exp1, binop, exp2):
+    #             """Sub() and Add()"""
+    #             u_exp1 = self.uniq_exp(exp1)
+    #             u_exp2 = self.uniq_exp(exp2)
+    #             return BinOp(u_exp1, binop, u_exp2)
+    #         case Compare(left, [cmp], [right]):
+    #             # similar to `BinOp` case
+    #             u_left = self.uniq_exp(left)
+    #             u_right = self.uniq_exp(right)
+    #             return Compare(u_left, [cmp], [u_right])
+    #         case IfExp(exp_test, exp_body, exp_else):
+    #             u_test = self.uniq_exp(exp_test)
+    #             u_body = [
+    #                 new_stat for s in exp_body for new_stat in self.uniquify_stat(s)]
+    #             u_else = [
+    #                 new_stat for s in exp_else for new_stat in self.uniquify_stat(s)]
+    #             return IfExp(u_test, u_body, u_else)
+    #         case Call(fun, args):
+    #             u_fun = self.uniq_exp(fun)
+    #             u_args = [self.uniq_exp(arg) for arg in args]
+    #             return Call(u_fun, u_args)
+    #         # case Call(Name('len')):
+    #         #     return e
+    #         # case GlobalValue(v):
+    #         #     # TODO: create a temp to hold it
+    #         #     tail = e
+    #         # case Allocate(len, type_list):
+    #         #     # TODO: ???
+    #         #     tail = e
+    #         case Subscript(var, idx, Load()):
+    #             u_var = self.uniq_exp(var)
+    #             u_idx = self.uniq_exp(idx)
+    #             return Subscript(u_var, u_idx, Load())
+    #         # case FunRef(f):
+    #         #     tail = e
+    #         case Name(var):
+    #             u_var = self.uniquify_mapping[var] if var in self.uniquify_mapping else var
+    #             return Name(u_var)
+    #         case _:
+    #             print("unhandled in uniq_exp: " + repr(e))
+    #             return e
+    #             # raise Exception(
+    #             #     'error in uniq_exp, unsupported expression ' + repr(e))
+
+    # def uniquify_stat(self, s: stmt):
+    #     new_stat = []
+    #     match s:
+    #         case Expr(Call(Name('print'), [exp])):
+    #             u_exp = self.uniq_exp(exp)
+    #             new_stat.append(Expr(Call(Name('print'), [u_exp])))
+    #         case Expr(exp):
+    #             u_exp = self.uniq_exp(exp)
+    #             new_stat.append(Expr(u_exp))
+    #         case Assign([Name(var)], exp):
+    #             u_var = self.uniquify_mapping[var] if var in self.uniquify_mapping else var
+    #             u_exp = self.uniq_exp(exp)
+    #             new_stat.append(Assign([Name(u_var)], u_exp))
+    #         case If(exp, stmts_body, stmts_else):
+    #             # need test
+    #             u_exp = self.uniq_exp(exp)
+    #             u_body = [
+    #                 new_stat for s in stmts_body for new_stat in self.uniquify_stat(s)]
+    #             u_else = [
+    #                 new_stat for s in stmts_else for new_stat in self.uniquify_stat(s)]
+    #             new_stat.append(If(u_exp, u_body, u_else))
+    #         case While(exp, stmts_body, []):
+    #             u_exp = self.uniq_exp(exp)
+    #             u_body = [
+    #                 new_stat for s in stmts_body for new_stat in self.uniquify_stat(s)]
+    #             new_stat.append(While(u_exp, u_body, []))
+    #         case Collect(bytes):
+    #             # TODO: ???
+    #             new_stat.append(s)
+    #         case Assign([Subscript(var, idx, Store())], exp):
+    #             u_var = self.uniq_exp(var)
+    #             u_idx = self.uniq_exp(idx)
+    #             u_exp = self.uniq_exp(exp)
+    #             new_stat.append(Assign(
+    #                 [Subscript(u_var, u_idx, Store())], u_exp))
+    #         case Return(exp):
+    #             u_exp = self.uniq_exp(exp)
+    #             new_stat.append(Return(u_exp))
+    #         case _:
+    #             raise Exception(
+    #                 'error in rco_stmt, stmt not supported ' + repr(s))    
+    #     return new_stat 
+    # def do_uniquify(self, stmts: list, uniquify_mapping: dict) -> list:
+    #     """change the name of d"""
+    #     self.uniquify_mapping = uniquify_mapping
+    #     new_stats = [new_stat for s in stmts for new_stat in self.uniquify_stat(s)]
+    #     return new_stats
+
 
     ############################################################################
     # Expose Allocation
