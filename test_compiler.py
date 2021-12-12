@@ -8,12 +8,23 @@ import interp_Cfun
 
 from interp_x86 import eval_x86
 
+
+# prog = """
+# def add(x:int,y:int)-> int :
+#   return x + y
+# print(add(40, 2))
+# """
+
 prog = """
-def id(f:Callable[([int],int,)])-> Callable[([int],int,)] :
-  return f
-def inc(x:int)-> int :
+def map(f : Callable[[int],int], 
+        v : tuple[(int, int,)]) -> tuple[(int, int,)]:
+  return (f(v[0]), f(v[1]),)
+
+def inc(x:int) -> int:
   return x + 1
-print(id(inc)(41))
+
+n = input_int()
+print(map(inc, (0, n,))[1])
 """
 
 
