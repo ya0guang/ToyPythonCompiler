@@ -62,6 +62,7 @@ def analyze_dataflow(G: DirectedAdjList, transfer: FunctionType, bottom, join: F
 
     return mapping
 
+
 class Compiler:
     """compile the whole program, and for each function, call methods in `CompileFunction`"""
 
@@ -75,7 +76,6 @@ class Compiler:
         self.function_compilers = {}
         # function -> {original_name: new_name}
         self.function_limit_renames = {}
-        
 
     def shrink(self, p: Module) -> Module:
         """create main function, making the module body a series of function definitions"""
@@ -273,14 +273,16 @@ class Compiler:
         assert(isinstance(p, X86ProgramDefs))
         for f in p.defs:
             assert(isinstance(f, FunctionDef))
-            f.body = self.function_compilers[f.name].assign_homes(X86Program(f.body))
+            f.body = self.function_compilers[f.name].assign_homes(
+                X86Program(f.body))
         return X86ProgramDefs(p.defs)
 
     def patch_instructions(self, p: X86ProgramDefs) -> X86ProgramDefs:
         assert(isinstance(p, X86ProgramDefs))
         for f in p.defs:
             assert(isinstance(f, FunctionDef))
-            f.body = self.function_compilers[f.name].patch_instructions(X86Program(f.body))
+            f.body = self.function_compilers[f.name].patch_instructions(
+                X86Program(f.body))
         return X86ProgramDefs(p.defs)
 
     def prelude_and_conclusion(self, p: X86ProgramDefs) -> X86Program:
@@ -288,7 +290,8 @@ class Compiler:
         new_body = {}
         for f in p.defs:
             assert(isinstance(f, FunctionDef))
-            f.body = self.function_compilers[f.name].prelude_and_conclusion(X86Program(f.body))
+            f.body = self.function_compilers[f.name].prelude_and_conclusion(
+                X86Program(f.body))
             # print("DEBUG, f.body: ", f.body)
             new_body.update(f.body)
 
@@ -915,17 +918,20 @@ class CompileFunction:
                     Instr('movq', [Global(var), Variable("Unnamed_Pyc_Var")]))
                 # instrs.append(Global(var))
             case FunRef(f):
-                instrs.append(Instr('leaq', [FunRef(f), Variable("Unnamed_Pyc_Var")]))
+                instrs.append(
+                    Instr('leaq', [FunRef(f), Variable("Unnamed_Pyc_Var")]))
             case Call(Name(func), args):
                 i = 0
                 new_args = [self.select_arg(arg) for arg in args]
                 for arg in new_args:
-                    instrs.append(Instr('movq', [arg, CompileFunction.arg_passing[i]]))
+                    instrs.append(
+                        Instr('movq', [arg, CompileFunction.arg_passing[i]]))
                     i += 1
                 # TODO: what if not an indirect call?
                 instrs.append(IndirectCallq(Variable(func), i))
                 # TODO: what if nothing returned? Delete "Unnamed_Pyc_Var" instructions
-                instrs.append(Instr('movq', [Reg('rax'), Variable("Unnamed_Pyc_Var")]))
+                instrs.append(
+                    Instr('movq', [Reg('rax'), Variable("Unnamed_Pyc_Var")]))
             case _:
                 instrs.append(
                     Instr('movq', [self.select_arg(e), Variable("Unnamed_Pyc_Var")]))
@@ -1000,7 +1006,8 @@ class CompileFunction:
                 i = 0
                 new_args = [self.select_arg(arg) for arg in args]
                 for arg in new_args:
-                    instrs.append(Instr('movq', [arg, CompileFunction.arg_passing[i]]))
+                    instrs.append(
+                        Instr('movq', [arg, CompileFunction.arg_passing[i]]))
                     i += 1
                 instrs.append(TailJump(Variable(func), i))
             case Return(exp):
@@ -1099,7 +1106,8 @@ class CompileFunction:
                 case TailJump(address, num_args):
                     (read_set, write_set) = (extract_locations(
                         CompileFunction.arg_passing[:num_args] + [address]), extract_locations(CompileFunction.caller_saved))
-                case Instr("leaq", [src, dest]): #TODO check this, should be same as move'
+                # TODO check this, should be same as move'
+                case Instr("leaq", [src, dest]):
                     print("DEBUG: hit leaq")
                     (read_set, write_set) = (extract_locations(
                         [src]), extract_locations([dest]))
@@ -1203,14 +1211,16 @@ class CompileFunction:
                         for dest in CompileFunction.caller_saved:
                             if not dest == loc:
                                 self.int_graph.add_edge(loc, dest)
-                case IndirectCallq(address, _num_args): #TODO check this, not sure if it should be the same as Callq
+                # TODO check this, not sure if it should be the same as Callq
+                case IndirectCallq(address, _num_args):
                     for loc in las:
                         for dest in CompileFunction.caller_saved:
                             if not dest == loc:
                                 self.int_graph.add_edge(loc, dest)
-                case TailJump(_):#TODO not sure what it should be
+                case TailJump(_):  # TODO not sure what it should be
                     pass
-                case Instr("leaq", [src, dest]):#TODO check if this should be the same as movq or not
+                # TODO check if this should be the same as movq or not
+                case Instr("leaq", [src, dest]):
                     for loc in las:
                         self.int_graph.add_vertex(loc)
                         if not (loc == src or loc == dest):
@@ -1341,7 +1351,8 @@ class CompileFunction:
                 new_func = self.assign_homes_arg(func, home)
                 return TailJump(new_func, num_args)
             case other:
-                print("WARNING, hit wild case in assign_homes_instr: ", other.__repr__())
+                print("WARNING, hit wild case in assign_homes_instr: ",
+                      other.__repr__())
                 return other
 
     def assign_homes_instrs(self, basic_blocks: Dict[str, List[instr]],
@@ -1480,7 +1491,7 @@ class CompileFunction:
                 patched_instrs.append(IndirectJump(Reg('rax')))
             case _:
                 patched_instrs.append(i)
-            
+
         return patched_instrs
 
     def patch_instrs(self, ss: List[instr]) -> List[instr]:
@@ -1494,6 +1505,7 @@ class CompileFunction:
 
         assert(type(p.body) == dict)
         # get frame sizes for tail jumps
+
         def align():
             alignment = 8 * (len(self.used_callee) +
                              self.normal_stack_count)  # current alignment
@@ -1516,7 +1528,7 @@ class CompileFunction:
     ############################################################################
 
     def prelude_and_conclusion(self, p: X86Program) -> Dict:
-        
+
         prelude = []
         prelude.append(Instr('pushq', [Reg('rbp')]))
         prelude.append(Instr('movq', [Reg('rsp'), Reg('rbp')]))
@@ -1526,17 +1538,19 @@ class CompileFunction:
         prelude.append(
             Instr('subq', [Immediate(self.stack_frame_size), Reg('rsp')]))
         # shadow stack handling for main
-        if self.name == "main": # TODO: may need string compare
+        if self.name == "main":  # TODO: may need string compare
             prelude.append(Instr('movq', [Immediate(16384), Reg('rdi')]))
             prelude.append(Instr('movq', [Immediate(16384), Reg('rsi')]))
             prelude.append(Callq('initialize', 2))
-            prelude.append(Instr('movq', [Global('rootstack_begin'), Reg('r15')]))
+            prelude.append(
+                Instr('movq', [Global('rootstack_begin'), Reg('r15')]))
 
         # Zero out all locations on the root stack "movq $0, $0(%r15)" = "movq $0, (%r15)"
         prelude.append(Instr('movq', [Immediate(0), Deref('r15', 0)]))
         prelude.append(
             Instr('addq', [Immediate(self.shadow_stack_size), Reg('r15')]))
-        prelude.append((Jump(self.name + 'start'))) # jump to start of function
+        # jump to start of function
+        prelude.append((Jump(self.name + 'start')))
 
         conclusion = []
         conclusion.append(
