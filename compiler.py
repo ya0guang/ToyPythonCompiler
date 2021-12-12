@@ -76,8 +76,7 @@ class Compiler:
         self.function_compilers = {}
         # function -> {original_name: new_name}
         self.function_limit_renames = {}
-
-        self.num_uniquified_vars = 0
+        self.num_uniquified_counter = 0
         
 
     def shrink(self, p: Module) -> Module:
@@ -103,25 +102,66 @@ class Compiler:
         return Module(new_module)
 
     def uniquify(self, p: Module) -> Module:
+
+        class Uniquify(NodeTransformer):
+            
+            def __init__(self, outer: Compiler, mapping: dict):
+                self.outer_instance = outer
+                self.uniquify_mapping = mapping
+                super().__init__()
+
+            def visit_Lambda(self, node):
+                self.generic_visit(node)
+                # print("DEBUG, Lambda: ", node)
+                match node:
+                    case Lambda(args, body):
+                        new_mapping = self.uniquify_mapping.copy()
+                        for v in args:
+                            print("DEBUG, v: ", v[0], "type: ", type(v[0]))
+                            new_mapping[v[0]] = v[0] + "_" + str(self.outer_instance.num_uniquified_counter)
+                            self.outer_instance.num_uniquified_counter += 1
+                        return Lambda(args, do_uniquify(body, new_mapping))
+
+                    case _:
+                        return node
+
+            def visit_Name(self, node):
+                self.generic_visit(node)
+                # print("DEBUG, Name: ", node)
+                match node:
+                    case Name(id):
+                        if id in self.uniquify_mapping:
+                            return Name(self.uniquify_mapping[id])
+                        else:
+                            return node
+                    case _:
+                        return node
+
         
         def do_uniquify(stmts: list, uniquify_mapping: dict) -> list:
             """change the name of d"""
-            pass
+            uniquifier = Uniquify(self, uniquify_mapping)
+            new_body = []
+            for s in stmts:
+                new_body.append(uniquifier.visit(s))
+            return new_body
         
         assert(isinstance(p, Module))
 
         for f in p.body:
             assert(isinstance(f, FunctionDef))
             uniquify_mapping = {}
+            new_args = []
             for v in f.args:
                 print("DEBUG, v: ", v[0], "type: ", type(v[0]))
-                uniquify_mapping[v[0]] = v[0] + "_" + str(self.num_uniquified_vars)
-                self.num_uniquified_vars += 1
-                f.body = do_uniquify(f.body, uniquify_mapping)
+                new_arg_name = v[0] + "_" + str(self.num_uniquified_counter)
+                uniquify_mapping[v[0]] = new_arg_name
+                new_args.append((new_arg_name, v[1], ))
+                self.num_uniquified_counter += 1
+            f.args = new_args
+            f.body = do_uniquify(f.body, uniquify_mapping)
         
         return p
-
-
 
     def reveal_functions(self, p: Module) -> Module:
         """change `Name(f)` to `FunRef(f)` for functions defined in the module"""
