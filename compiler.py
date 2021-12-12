@@ -62,6 +62,7 @@ def analyze_dataflow(G: DirectedAdjList, transfer: FunctionType, bottom, join: F
 
     return mapping
 
+
 class Compiler:
     """compile the whole program, and for each function, call methods in `CompileFunction`"""
 
@@ -75,8 +76,7 @@ class Compiler:
         self.function_compilers = {}
         # function -> {original_name: new_name}
         self.function_limit_renames = {}
-
-        self.num_uniquified_vars = 0
+        self.num_uniquified_counter = 0
         
 
     def shrink(self, p: Module) -> Module:
@@ -102,126 +102,53 @@ class Compiler:
         return Module(new_module)
 
     def uniquify(self, p: Module) -> Module:
+
         class Uniquify(NodeTransformer):
-            def __init__(self, outer: Compiler):
+            
+            def __init__(self, outer: Compiler, mapping: dict):
                 self.outer_instance = outer
+                self.uniquify_mapping = mapping
                 super().__init__()
-                self.uniquify_mapping: dict
-                self.num_uniquified_vars: int
 
-            def uniq_exp(self, e: expr, lambda_mappings={}):
-                # print("uni_exp: " + repr(e))
-                match e:
-                    # `and` & `or`
-                    case BoolOp(op, args):
-                        u_args = [self.uniq_exp(args[0]), self.uniq_exp(args[1])]
-                        return BoolOp(op, u_args)
-                    case Tuple(args, Load()):
-                        u_args = [self.uniq_exp(arg) for arg in args]
-                        # TODO: may not be able to create the tuple in the next statement
-                        return Tuple(u_args, Load())
-                    case Begin(body, result):
-                        new_body = [
-                            new_stat for s in body for new_stat in self.uniquify_stat(s)]
-                        return Begin(new_body, result)
-                    case UnaryOp(uniop, exp):
-                        # `Not()` and `USub`
-                        u_exp = self.uniq_exp(exp)
-                        return UnaryOp(uniop, u_exp)
-                    case BinOp(exp1, binop, exp2):
-                        """Sub() and Add()"""
-                        u_exp1 = self.uniq_exp(exp1)
-                        u_exp2 = self.uniq_exp(exp2)
-                        return BinOp(u_exp1, binop, u_exp2)
-                    case Compare(left, [cmp], [right]):
-                        # similar to `BinOp` case
-                        u_left = self.uniq_exp(left)
-                        u_right = self.uniq_exp(right)
-                        return Compare(u_left, [cmp], [u_right])
-                    case IfExp(exp_test, exp_body, exp_else):
-                        u_test = self.uniq_exp(exp_test)
-                        u_body = self.uniq_exp(exp_body)
-                        u_else = self.uniq_exp(exp_else)
-                        return IfExp(u_test, u_body, u_else)
-                    case Call(Name('input_int'), []):
-                        return e
-                    case Call(fun, args):
-                        u_fun = self.uniq_exp(fun)
-                        u_args = [self.uniq_exp(arg) for arg in args]
-                        return Call(u_fun, u_args)
-                    case Subscript(var, idx, Load()):
-                        u_var = self.uniq_exp(var)
-                        u_idx = self.uniq_exp(idx)
-                        return Subscript(u_var, u_idx, Load())
-                    case Name(var):
-                        u_var = lambda_mappings[var] if var in lambda_mappings else self.uniquify_mapping[var] 
-                        return Name(u_var)
-                    case Lambda(vars, exp):
-                        uniq_lambda_mappings = {}
-                        u_vars = []
-                        for var in vars:
-                            uniq_lambda_mappings[var] = var + "_" + str(self.num_uniquified_vars)
-                            self.num_uniquified_vars += 1
-                            u_vars.append(uniq_lambda_mappings[var])
-                        u_exp = self.uniq_exp(exp, uniq_lambda_mappings)
-                        return Lambda(u_vars, u_exp)
+            def visit_Lambda(self, node):
+                self.generic_visit(node)
+                match node:
+                    case Lambda(args, body_expr):
+                        new_mapping = self.uniquify_mapping.copy()
+                        new_args = []
+                        for v in args:
+                            new_v = v + "_" + str(self.outer_instance.num_uniquified_counter)
+                            # find the new name in the previous mapping
+                            new_mapping[new_mapping[v]] = new_v
+                            # delete the old mapping
+                            del new_mapping[v]
+                            new_args.append(new_v)
+                            self.outer_instance.num_uniquified_counter += 1
+                        new_uniquifier = Uniquify(self.outer_instance, new_mapping)
+                        new_body_expr = new_uniquifier.visit(body_expr)
+                        return Lambda(new_args, new_body_expr)
                     case _:
-                        print("unhandled in uniq_exp: " + repr(e))
-                        return e
+                        return node
 
-            def uniquify_stat(self, s: stmt):
-                # print("uni_stat: " + repr(s))
-                new_stat = []
-                match s:
-                    case Expr(Call(Name('print'), [exp])):
-                        u_exp = self.uniq_exp(exp)
-                        new_stat.append(Expr(Call(Name('print'), [u_exp])))
-                    case Expr(exp):
-                        u_exp = self.uniq_exp(exp)
-                        new_stat.append(Expr(u_exp))
-                    case Assign([Name(var)], exp):
-                        if var not in self.uniquify_mapping:
-                            self.uniquify_mapping[var] = var + "_" + str(self.num_uniquified_vars)
-                            self.num_uniquified_vars += 1
-                        u_var = self.uniquify_mapping[var]
-                        u_exp = self.uniq_exp(exp)
-                        new_stat.append(Assign([Name(u_var)], u_exp))
-                    case If(exp, stmts_body, stmts_else):
-                        # need test
-                        u_exp = self.uniq_exp(exp)
-                        u_body = [
-                            new_stat for s in stmts_body for new_stat in self.uniquify_stat(s)]
-                        u_else = [
-                            new_stat for s in stmts_else for new_stat in self.uniquify_stat(s)]
-                        new_stat.append(If(u_exp, u_body, u_else))
-                    case While(exp, stmts_body, []):
-                        u_exp = self.uniq_exp(exp)
-                        u_body = [
-                            new_stat for s in stmts_body for new_stat in self.uniquify_stat(s)]
-                        new_stat.append(While(u_exp, u_body, []))
-                    case Collect(bytes):
-                        # TODO: ???
-                        new_stat.append(s)
-                    case Assign([Subscript(var, idx, Store())], exp):
-                        u_var = self.uniq_exp(var)
-                        u_idx = self.uniq_exp(idx)
-                        u_exp = self.uniq_exp(exp)
-                        new_stat.append(Assign(
-                            [Subscript(u_var, u_idx, Store())], u_exp))
-                    case Return(exp):
-                        u_exp = self.uniq_exp(exp)
-                        new_stat.append(Return(u_exp))
+            def visit_Name(self, node):
+                self.generic_visit(node)
+                match node:
+                    case Name(id):
+                        if id in self.uniquify_mapping:
+                            return Name(self.uniquify_mapping[id])
+                        else:
+                            return node
                     case _:
-                        raise Exception(
-                            'error in rco_stmt, stmt not supported ' + repr(s))    
-                return new_stat 
-            def do_uniquify(self, stmts: list, uniquify_mapping: dict, num_uniquified_vars: int) -> list:
-                """change the name of d"""
-                self.uniquify_mapping = uniquify_mapping
-                self.num_uniquified_vars = num_uniquified_vars
-                new_stats = [new_stat for s in stmts for new_stat in self.uniquify_stat(s)]
-                return new_stats
+                        return node
+
         
+        def do_uniquify(stmts: list, uniquify_mapping: dict) -> list:
+            """change the variable names of statements in place according to the uniquify_mapping"""
+            uniquifier = Uniquify(self, uniquify_mapping)
+            new_body = []
+            for s in stmts:
+                new_body.append(uniquifier.visit(s))
+            return new_body
         
         assert(isinstance(p, Module))
 
@@ -229,18 +156,15 @@ class Compiler:
             uniquify_mapping = {}
             new_args = []
             for v in f.args:
-                # print("name: " + repr(v[0])) if isinstance(v[0], Name) else print("not name: " + repr(v[0]) + "\ttype: " + str(type(v[0])))
-                # print("DEBUG, v: ", v[0], "type: ", type(v[0]))
-                uniquify_mapping[v[0]] = v[0] + "_" + str(self.num_uniquified_vars)
-                self.num_uniquified_vars += 1
-                new_args.append((uniquify_mapping[v[0]], v[1]))
-
-            f.body = Uniquify(self).do_uniquify(f.body, uniquify_mapping, self.num_uniquified_vars)
+                print("DEBUG, v: ", v[0], "type: ", type(v[0]))
+                new_arg_name = v[0] + "_" + str(self.num_uniquified_counter)
+                uniquify_mapping[v[0]] = new_arg_name
+                new_args.append((new_arg_name, v[1], ))
+                self.num_uniquified_counter += 1
             f.args = new_args
+            f.body = do_uniquify(f.body, uniquify_mapping)
         
         return p
-
-
 
     def reveal_functions(self, p: Module) -> Module:
         """change `Name(f)` to `FunRef(f)` for functions defined in the module"""
@@ -416,28 +340,25 @@ class Compiler:
         assert(isinstance(p, X86ProgramDefs))
         for f in p.defs:
             assert(isinstance(f, FunctionDef))
-            f.body = self.function_compilers[f.name].assign_homes(X86Program(f.body))
+            f.body = self.function_compilers[f.name].assign_homes(
+                X86Program(f.body))
         return X86ProgramDefs(p.defs)
 
     def patch_instructions(self, p: X86ProgramDefs) -> X86ProgramDefs:
         assert(isinstance(p, X86ProgramDefs))
         for f in p.defs:
             assert(isinstance(f, FunctionDef))
-            f.body = self.function_compilers[f.name].patch_instructions(X86Program(f.body))
+            f.body = self.function_compilers[f.name].patch_instructions(
+                X86Program(f.body))
         return X86ProgramDefs(p.defs)
-        # assert(isinstance(p, X86ProgramDefs))
-        # for f in p.defs:
-        #     assert(isinstance(f, FunctionDef))
-        #     f.body = self.function_compilers[f.name].patch_instructions(X86Program(f.body))
-        # return X86ProgramDefs(p.defs)
-        pass
 
     def prelude_and_conclusion(self, p: X86ProgramDefs) -> X86Program:
         assert(isinstance(p, X86ProgramDefs))
         new_body = {}
         for f in p.defs:
             assert(isinstance(f, FunctionDef))
-            f.body = self.function_compilers[f.name].prelude_and_conclusion(X86Program(f.body))
+            f.body = self.function_compilers[f.name].prelude_and_conclusion(
+                X86Program(f.body))
             # print("DEBUG, f.body: ", f.body)
             new_body.update(f.body)
 
@@ -513,119 +434,6 @@ class CompileFunction:
             case _:
                 raise Exception(
                     'error in extend_reg, unsupported register name ' + repr(r))
-    ############################################################################
-    # Uniquify
-    ############################################################################
-    # def uniq_exp(self, e: expr):
-    #     match e:
-    #         # `and` & `or`
-    #         case BoolOp(op, args):
-    #             u_args = [self.uniq_exp(args[0]), self.uniq_exp(args[1])]
-    #             return BoolOp(op, u_args)
-    #         case Tuple(args, Load()):
-    #             u_args = [self.uniq_exp(arg) for arg in args]
-    #             # TODO: may not be able to create the tuple in the next statement
-    #             return Tuple(u_args, Load())
-    #         case Begin(body, result):
-    #             new_body = [
-    #                 new_stat for s in body for new_stat in self.uniquify_stat(s)]
-    #             return Begin(new_body, result)
-    #         case UnaryOp(uniop, exp):
-    #             # `Not()` and `USub`
-    #             u_exp = self.uniq_exp(exp)
-    #             return UnaryOp(uniop, u_exp)
-    #         case BinOp(exp1, binop, exp2):
-    #             """Sub() and Add()"""
-    #             u_exp1 = self.uniq_exp(exp1)
-    #             u_exp2 = self.uniq_exp(exp2)
-    #             return BinOp(u_exp1, binop, u_exp2)
-    #         case Compare(left, [cmp], [right]):
-    #             # similar to `BinOp` case
-    #             u_left = self.uniq_exp(left)
-    #             u_right = self.uniq_exp(right)
-    #             return Compare(u_left, [cmp], [u_right])
-    #         case IfExp(exp_test, exp_body, exp_else):
-    #             u_test = self.uniq_exp(exp_test)
-    #             u_body = [
-    #                 new_stat for s in exp_body for new_stat in self.uniquify_stat(s)]
-    #             u_else = [
-    #                 new_stat for s in exp_else for new_stat in self.uniquify_stat(s)]
-    #             return IfExp(u_test, u_body, u_else)
-    #         case Call(fun, args):
-    #             u_fun = self.uniq_exp(fun)
-    #             u_args = [self.uniq_exp(arg) for arg in args]
-    #             return Call(u_fun, u_args)
-    #         # case Call(Name('len')):
-    #         #     return e
-    #         # case GlobalValue(v):
-    #         #     # TODO: create a temp to hold it
-    #         #     tail = e
-    #         # case Allocate(len, type_list):
-    #         #     # TODO: ???
-    #         #     tail = e
-    #         case Subscript(var, idx, Load()):
-    #             u_var = self.uniq_exp(var)
-    #             u_idx = self.uniq_exp(idx)
-    #             return Subscript(u_var, u_idx, Load())
-    #         # case FunRef(f):
-    #         #     tail = e
-    #         case Name(var):
-    #             u_var = self.uniquify_mapping[var] if var in self.uniquify_mapping else var
-    #             return Name(u_var)
-    #         case _:
-    #             print("unhandled in uniq_exp: " + repr(e))
-    #             return e
-    #             # raise Exception(
-    #             #     'error in uniq_exp, unsupported expression ' + repr(e))
-
-    # def uniquify_stat(self, s: stmt):
-    #     new_stat = []
-    #     match s:
-    #         case Expr(Call(Name('print'), [exp])):
-    #             u_exp = self.uniq_exp(exp)
-    #             new_stat.append(Expr(Call(Name('print'), [u_exp])))
-    #         case Expr(exp):
-    #             u_exp = self.uniq_exp(exp)
-    #             new_stat.append(Expr(u_exp))
-    #         case Assign([Name(var)], exp):
-    #             u_var = self.uniquify_mapping[var] if var in self.uniquify_mapping else var
-    #             u_exp = self.uniq_exp(exp)
-    #             new_stat.append(Assign([Name(u_var)], u_exp))
-    #         case If(exp, stmts_body, stmts_else):
-    #             # need test
-    #             u_exp = self.uniq_exp(exp)
-    #             u_body = [
-    #                 new_stat for s in stmts_body for new_stat in self.uniquify_stat(s)]
-    #             u_else = [
-    #                 new_stat for s in stmts_else for new_stat in self.uniquify_stat(s)]
-    #             new_stat.append(If(u_exp, u_body, u_else))
-    #         case While(exp, stmts_body, []):
-    #             u_exp = self.uniq_exp(exp)
-    #             u_body = [
-    #                 new_stat for s in stmts_body for new_stat in self.uniquify_stat(s)]
-    #             new_stat.append(While(u_exp, u_body, []))
-    #         case Collect(bytes):
-    #             # TODO: ???
-    #             new_stat.append(s)
-    #         case Assign([Subscript(var, idx, Store())], exp):
-    #             u_var = self.uniq_exp(var)
-    #             u_idx = self.uniq_exp(idx)
-    #             u_exp = self.uniq_exp(exp)
-    #             new_stat.append(Assign(
-    #                 [Subscript(u_var, u_idx, Store())], u_exp))
-    #         case Return(exp):
-    #             u_exp = self.uniq_exp(exp)
-    #             new_stat.append(Return(u_exp))
-    #         case _:
-    #             raise Exception(
-    #                 'error in rco_stmt, stmt not supported ' + repr(s))    
-    #     return new_stat 
-    # def do_uniquify(self, stmts: list, uniquify_mapping: dict) -> list:
-    #     """change the name of d"""
-    #     self.uniquify_mapping = uniquify_mapping
-    #     new_stats = [new_stat for s in stmts for new_stat in self.uniquify_stat(s)]
-    #     return new_stats
-
 
     ############################################################################
     # Expose Allocation
@@ -647,10 +455,11 @@ class CompileFunction:
 
         tup_bytes = (len(content) + 1) * 8
 
-        # TODO: may need constant(tup_bytes)
         if_cond = Compare(BinOp(GlobalValue('free_ptr'), Add(), Constant(tup_bytes)), [
                           Lt()], [GlobalValue('fromspace_end')])
-        body.append(If(if_cond, [Expr(Constant(0))], [Collect(tup_bytes)]))
+
+        # TODO: Expr(Constant(0)) OK here?
+        body.append(If(if_cond, [], [Collect(tup_bytes)]))
 
         var = Name("pyc_temp_tup_" + str(self.tup_temp_count))
         body.append(Assign([var], Allocate(len(content), t.has_type)))
@@ -928,10 +737,6 @@ class CompileFunction:
                 self.temp_count += 1
                 return [Assign([var], cnd)] + self.explicate_pred(var, thn, els)
             case UnaryOp(Not(), operand):
-                # return [If(UnaryOp(Not(), operand),
-                #     [Goto(self.create_block(thn))],
-                #     [Goto(self.create_block(els))])]
-                # change to a compare here
                 return [If(Compare(operand, [Eq()], [Constant(False)]),
                            [self.create_block(thn)],
                            [self.create_block(els)])]
@@ -1089,7 +894,6 @@ class CompileFunction:
                 # if ts[i] is Tuple:
                 #     # Do something to tag here
                 #     print("DEBUG: hit Tuple")
-                #     pass
                 match ts[i]:
                     case TupleType(nest_ts):
                         # Do something to tag here
@@ -1180,14 +984,21 @@ class CompileFunction:
                 instrs.append(
                     Instr('movq', [Global(var), Variable("Unnamed_Pyc_Var")]))
                 # instrs.append(Global(var))
+            case FunRef(f):
+                instrs.append(
+                    Instr('leaq', [FunRef(f), Variable("Unnamed_Pyc_Var")]))
             case Call(Name(func), args):
                 i = 0
                 new_args = [self.select_arg(arg) for arg in args]
                 for arg in new_args:
-                    instrs.append(Instr('movq', [arg, CompileFunction.arg_passing[i]]))
+                    instrs.append(
+                        Instr('movq', [arg, CompileFunction.arg_passing[i]]))
                     i += 1
                 # TODO: what if not an indirect call?
                 instrs.append(IndirectCallq(Variable(func), i))
+                # TODO: what if nothing returned? Delete "Unnamed_Pyc_Var" instructions
+                instrs.append(
+                    Instr('movq', [Reg('rax'), Variable("Unnamed_Pyc_Var")]))
             case _:
                 instrs.append(
                     Instr('movq', [self.select_arg(e), Variable("Unnamed_Pyc_Var")]))
@@ -1242,13 +1053,7 @@ class CompileFunction:
             case Expr(exp):
                 instrs += self.select_expr(exp)
             case Assign([Name(var)], exp):
-                if isinstance(exp, FunRef):
-                    instrs.append(Instr('leaq', [exp, Variable(var)]))
-                elif isinstance(exp, Call):
-                    instrs += self.select_expr(exp)
-                    instrs.append(Instr('movq', [Reg('rax'), Variable(var)]))
-                else:
-                    instrs += bound_unamed(self.select_expr(exp), var)
+                instrs += bound_unamed(self.select_expr(exp), var)
             case Assign([Subscript(tup, idx, Store())], exp):
                 instrs.append(
                     Instr('movq', [self.select_arg(tup), Reg('r11')]))
@@ -1268,7 +1073,8 @@ class CompileFunction:
                 i = 0
                 new_args = [self.select_arg(arg) for arg in args]
                 for arg in new_args:
-                    instrs.append(Instr('movq', [arg, CompileFunction.arg_passing[i]]))
+                    instrs.append(
+                        Instr('movq', [arg, CompileFunction.arg_passing[i]]))
                     i += 1
                 instrs.append(TailJump(Variable(func), i))
             case Return(exp):
@@ -1361,13 +1167,14 @@ class CompileFunction:
                     target.add(dest)
                 case JumpIf(_cc, dest):
                     target.add(dest)
-                case IndirectCallq(address, num_args): #TODO check this
+                case IndirectCallq(address, num_args):
                     (read_set, write_set) = (extract_locations(
-                        CompileFunction.arg_passing[:num_args]), extract_locations(CompileFunction.caller_saved))
-                case TailJump(address, num_args): #TODO check this
+                        CompileFunction.arg_passing[:num_args] + [address]), extract_locations(CompileFunction.caller_saved))
+                case TailJump(address, num_args):
                     (read_set, write_set) = (extract_locations(
-                        CompileFunction.arg_passing[:num_args]), extract_locations(CompileFunction.caller_saved))
-                case Instr("leaq", [src, dest]): #TODO check this, should be same as move'
+                        CompileFunction.arg_passing[:num_args] + [address]), extract_locations(CompileFunction.caller_saved))
+                # TODO check this, should be same as move'
+                case Instr("leaq", [src, dest]):
                     print("DEBUG: hit leaq")
                     (read_set, write_set) = (extract_locations(
                         [src]), extract_locations([dest]))
@@ -1413,22 +1220,6 @@ class CompileFunction:
         mapping = analyze_dataflow(
             self.control_flow_graph, transfer, set(), join)
 
-        # for label in topological_sort(transpose(self.control_flow_graph)):
-        #     # conclusion block may not exist early
-        #     if label in self.basic_blocks:
-        #         block = self.basic_blocks[label]
-        #     else:
-        #         continue
-        #     last_set = set()
-        #     for out in self.control_flow_graph.out[label]:
-        #         # conclusion block may not exist early
-        #         if out in self.basic_blocks:
-        #             last_set = last_set.union(self.live_before_set_dict[self.basic_blocks[out][0]])
-        #     for ins in reversed(block):
-        #         self.live_after_set_dict[ins] = last_set
-        #         self.live_before_set_dict[ins] = last_set.difference(self.write_set_dict[ins]).union(self.read_set_dict[ins])
-        #         last_set = self.live_before_set_dict[ins]
-
         print(mapping)
         self.live_before_block = mapping
 
@@ -1452,9 +1243,6 @@ class CompileFunction:
     def build_interference(self, las_dict: Dict[instr, set]) -> bool:
         """store the interference graph in member, `self.int_graph`"""
         for ins, las in las_dict.items():
-            # for i in range(len(ins_list)):
-            #     ins = ins_list[i]  # instruction
-            #     las = las_list[i]  # live-after set
             match ins:
                 case Instr("movq", [src, dest]):
                     for loc in las:
@@ -1490,14 +1278,16 @@ class CompileFunction:
                         for dest in CompileFunction.caller_saved:
                             if not dest == loc:
                                 self.int_graph.add_edge(loc, dest)
-                case IndirectCallq(address, _num_args): #TODO check this, not sure if it should be the same as Callq
+                # TODO check this, not sure if it should be the same as Callq
+                case IndirectCallq(address, _num_args):
                     for loc in las:
                         for dest in CompileFunction.caller_saved:
                             if not dest == loc:
                                 self.int_graph.add_edge(loc, dest)
-                case TailJump(_):#TODO not sure what it should be
+                case TailJump(_):  # TODO not sure what it should be
                     pass
-                case Instr("leaq", [src, dest]):#TODO check if this should be the same as movq or not
+                # TODO check if this should be the same as movq or not
+                case Instr("leaq", [src, dest]):
                     for loc in las:
                         self.int_graph.add_vertex(loc)
                         if not (loc == src or loc == dest):
@@ -1628,7 +1418,8 @@ class CompileFunction:
                 new_func = self.assign_homes_arg(func, home)
                 return TailJump(new_func, num_args)
             case other:
-                print("WARNING, hit wild case in assign_homes_instr: ", other.__repr__())
+                print("WARNING, hit wild case in assign_homes_instr: ",
+                      other.__repr__())
                 return other
 
     def assign_homes_instrs(self, basic_blocks: Dict[str, List[instr]],
@@ -1668,6 +1459,7 @@ class CompileFunction:
                 self.normal_stack_count += 1
 
         for vertex, color in shadow_stack.items():
+            # TODO: may not be right
             # spill all
             offset = int(color.imag - 1)
             result[vertex] = Deref(
@@ -1766,7 +1558,7 @@ class CompileFunction:
                 patched_instrs.append(IndirectJump(Reg('rax')))
             case _:
                 patched_instrs.append(i)
-            
+
         return patched_instrs
 
     def patch_instrs(self, ss: List[instr]) -> List[instr]:
@@ -1780,6 +1572,7 @@ class CompileFunction:
 
         assert(type(p.body) == dict)
         # get frame sizes for tail jumps
+
         def align():
             alignment = 8 * (len(self.used_callee) +
                              self.normal_stack_count)  # current alignment
@@ -1802,7 +1595,7 @@ class CompileFunction:
     ############################################################################
 
     def prelude_and_conclusion(self, p: X86Program) -> Dict:
-        
+
         prelude = []
         prelude.append(Instr('pushq', [Reg('rbp')]))
         prelude.append(Instr('movq', [Reg('rsp'), Reg('rbp')]))
@@ -1812,17 +1605,19 @@ class CompileFunction:
         prelude.append(
             Instr('subq', [Immediate(self.stack_frame_size), Reg('rsp')]))
         # shadow stack handling for main
-        if self.name == "main": # TODO: may need string compare
+        if self.name == "main":  # TODO: may need string compare
             prelude.append(Instr('movq', [Immediate(16384), Reg('rdi')]))
             prelude.append(Instr('movq', [Immediate(16384), Reg('rsi')]))
             prelude.append(Callq('initialize', 2))
-            prelude.append(Instr('movq', [Global('rootstack_begin'), Reg('r15')]))
+            prelude.append(
+                Instr('movq', [Global('rootstack_begin'), Reg('r15')]))
 
         # Zero out all locations on the root stack "movq $0, $0(%r15)" = "movq $0, (%r15)"
         prelude.append(Instr('movq', [Immediate(0), Deref('r15', 0)]))
         prelude.append(
             Instr('addq', [Immediate(self.shadow_stack_size), Reg('r15')]))
-        prelude.append((Jump(self.name + 'start'))) # jump to start of function
+        # jump to start of function
+        prelude.append((Jump(self.name + 'start')))
 
         conclusion = []
         conclusion.append(
