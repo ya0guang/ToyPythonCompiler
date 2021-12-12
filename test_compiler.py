@@ -1,13 +1,25 @@
 from ast import *
 from compiler import *
 from utils import repr_Module
-import type_check_Lfun
-import type_check_Cfun
-import interp_Lfun
-import interp_Cfun
+import type_check_Llambda
+import type_check_Clambda
+import interp_Llambda
+import interp_Clambda
 
 from interp_x86 import eval_x86
 
+
+prog = """
+def foo(x: int, y: int, z: int) -> Callable[[int],int]:
+    x = 100
+    y = 200
+    bar: Callable[[int],int] = lambda x: x + y + z
+    z = 10
+    return bar
+
+z = 30
+print(foo(1, 2, z)(1))
+"""
 
 # prog = """
 # def add(x:int,y:int)-> int :
@@ -15,19 +27,17 @@ from interp_x86 import eval_x86
 # print(add(40, 2))
 # """
 
-prog = """
-def map(f : Callable[[int],int], 
-        v : tuple[(int, int,)]) -> tuple[(int, int,)]:
-  return (f(v[0]), f(v[1]),)
+# prog = """
+# def map(f : Callable[[int],int], 
+#         v : tuple[(int, int,)]) -> tuple[(int, int,)]:
+#   return (f(v[0]), f(v[1]),)
 
-def inc(x:int) -> int:
-  return x + 1
+# def inc(x:int) -> int:
+#   return x + 1
 
-n = input_int()
-print(map(inc, (0, n,))[1])
-"""
-
-
+# n = input_int()
+# print(map(inc, (0, n,))[1])
+# """
 
 # prog = """
 # def sum(a:int,b:int,c:int,d:int,e:int,f:int,g:int,h:int)-> int :
@@ -199,7 +209,7 @@ print(map(inc, (0, n,))[1])
 # print(x1 + - x2 + x3 + - x4 + x5 + - x6 + x7 + - x8 + x9 + - x10 + x11 + - x12 + x13 + - x14 + x15 + - x16 + 42)
 # """
 
-interp = interp_Lfun.InterpLfun()
+interp = interp_Llambda.InterpLlambda()
 # interp = interp_Pvar.InterpPvar()
 
 p = parse(prog)
@@ -207,7 +217,7 @@ p = parse(prog)
 print("\n======= AST of the original program")
 print(p)
 
-type_check_Lfun.TypeCheckLfun().type_check(p)
+type_check_Llambda.TypeCheckLlambda().type_check(p)
 print("\n======= type check passes")
 
 # print("\n======= interpreting original program")
@@ -224,6 +234,10 @@ interp.interp(p_shrinked)
 print("\n======= uniquify program")
 p_uniquifid = compiler.uniquify(p_shrinked)
 print(p_uniquifid)
+
+print("\n======= uniquify program AST")
+print(p_uniquifid.__repr__())
+
 print("\n======= interpreting uniquifid program")
 interp.interp(p_uniquifid)
 
@@ -232,7 +246,6 @@ p_revealed = compiler.reveal_functions(p_shrinked)
 print(p_revealed)
 
 print("\n======= reveal functions AST")
-# print(ast.dump(p_revealed))
 print(p_revealed.__repr__())
 
 print("\n======= interpreting revealed functions program")
@@ -248,7 +261,7 @@ print(ast.dump(p_limited))
 print("\n======= interpreting limit functions program")
 interp.interp(p_limited)
 
-type_check_Lfun.TypeCheckLfun().type_check(p_limited)
+type_check_Llambda.TypeCheckLlambda().type_check(p_limited)
 
 p_rcoed = compiler.remove_complex_operands(p_limited)
 
@@ -272,11 +285,11 @@ print(p_exped.__repr__())
 
 
 print("\n======= type checking EXPed program")
-type_check_Cfun.TypeCheckCfun().type_check(p_exped)
+type_check_Clambda.TypeCheckClambda().type_check(p_exped)
 
 
 print("\n======= interpreting EXPed program")
-cif_interp = interp_Cfun.InterpCfun()
+cif_interp = interp_Clambda.InterpClambda()
 cif_interp.interp(p_exped)
 
 print("\n======= selecting instructions\n")

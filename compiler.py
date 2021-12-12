@@ -112,22 +112,26 @@ class Compiler:
 
             def visit_Lambda(self, node):
                 self.generic_visit(node)
-                # print("DEBUG, Lambda: ", node)
                 match node:
-                    case Lambda(args, body):
+                    case Lambda(args, body_expr):
                         new_mapping = self.uniquify_mapping.copy()
+                        new_args = []
                         for v in args:
-                            print("DEBUG, v: ", v[0], "type: ", type(v[0]))
-                            new_mapping[v[0]] = v[0] + "_" + str(self.outer_instance.num_uniquified_counter)
+                            new_v = v + "_" + str(self.outer_instance.num_uniquified_counter)
+                            # find the new name in the previous mapping
+                            new_mapping[new_mapping[v]] = new_v
+                            # delete the old mapping
+                            del new_mapping[v]
+                            new_args.append(new_v)
                             self.outer_instance.num_uniquified_counter += 1
-                        return Lambda(args, do_uniquify(body, new_mapping))
-
+                        new_uniquifier = Uniquify(self.outer_instance, new_mapping)
+                        new_body_expr = new_uniquifier.visit(body_expr)
+                        return Lambda(new_args, new_body_expr)
                     case _:
                         return node
 
             def visit_Name(self, node):
                 self.generic_visit(node)
-                # print("DEBUG, Name: ", node)
                 match node:
                     case Name(id):
                         if id in self.uniquify_mapping:
@@ -139,7 +143,7 @@ class Compiler:
 
         
         def do_uniquify(stmts: list, uniquify_mapping: dict) -> list:
-            """change the name of d"""
+            """change the variable names of statements in place according to the uniquify_mapping"""
             uniquifier = Uniquify(self, uniquify_mapping)
             new_body = []
             for s in stmts:
