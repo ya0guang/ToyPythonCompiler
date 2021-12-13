@@ -10,6 +10,7 @@ import types
 from functools import *
 from typing import List, Set, Dict
 import typing
+import type_check_Llambda
 
 # Type notes
 Binding = typing.Tuple[Name, expr]
@@ -199,7 +200,123 @@ class Compiler:
                 # print("DEBUG, new node: ", ast.dump(n))
             f.body = new_body
 
+        type_check_Llambda.TypeCheckLlambda().type_check(p)
+
         return p
+
+    def convert_to_closure(self, p: Module) -> Module:
+
+        class ConvertToClosure(NodeTransformer):
+
+            def __init__(self, outer: Compiler):
+                self.outer_instance = outer
+                super().__init__()
+                self.lambdaCount = 0
+                self.fvsCount = 1
+                self.closureCount = 0
+                self.newFunctionDefs = []
+        # main = FunctionDef('main', args=[], body=[], decorator_list=[], returns=int)
+
+            def visit_Lambda(self, node):
+                def free_vars(body: list[stmt], boundArgs: list[str]) -> list[Name]:
+                    freeVars = []
+                    for node in body:
+                        self.generic_visit(node)
+                        match node:
+                            case Name(var) if var not in boundArgs:
+                                freeVars.append(node)
+                            case _: # do nothing
+                                pass
+                    return freeVars
+
+                self.generic_visit(node)
+                match node:
+                    case Lambda(args, body_expr):
+                        name = "lambda_" + str(self.lambdaCount)
+                        self.lambdaCount += 1
+                        closureArgName = "fvs_" + str(self.fvsCount)
+                        self.fvsCount += 1
+
+                        closureLst = [FunRef(name)]
+                        closureArgTypes = [Bottom()]
+                        newFunBody = []
+                        argCt = 1
+                        # TODO: may have to translate body_expr before this because of nested lambdas?
+                        for v in free_vars(body_expr, args):
+                            closureLst.append(v)
+                            closureArgTypes.append(v.has_type)
+                            newFunBody.append(Assign(v, Subscript(Name(closureArgName), Constant(argCt), Load())))
+                            argCt += 1
+
+                        new_closure_converter = ConvertToClosure(self.outer_instance)
+                        new_body_expr = new_closure_converter.visit(body_expr)
+                        newFunBody += new_body_expr
+
+                        newFunArgs = [(closureArgName, TupleType(closureArgTypes))]
+                        for arg in args:
+                            newFunArgs.append((arg, arg.has_type))
+
+                        # TODO: figure out return type
+                        self.newFunctionDefs.append(FunctionDef(name, args=newFunArgs, body=newFunBody, decorator_list=[], returns=int))
+                        self.outer_instance.functions.append(name)
+
+                        return Closure(len(closureLst), closureLst)
+                    case _:
+                        return node
+
+            def visit_FunctionDef(self, node):
+                def translateType(t):
+                    match t:
+                        case FunctionType(argTypes, returnType):
+                            return TupleType([FunctionType( [TupleType([])])] + argTypes, returnType)
+                        case _:
+                            return t
+                self.generic_visit(node)
+                match node:
+                    case FunctionDef(name, args, body, dec_list, returnType):
+                        new_args = []
+                        for arg in args:
+                            new_args.append((arg[0], translateType(arg[1])))
+                        return FunctionDef(name, new_args, body, dec_list, translateType(returnType))
+                    case _:
+                        return node
+            def visit_Call(self, node: Call):
+                self.generic_visit(node)
+                match node:
+                    case Call(fun, args):
+                        tmp = "clos_" + str(self.closureCount)
+                        self.closureCount += 1
+                        return Let(tmp, fun, [Call(Subscript(Name(tmp), Constant(0)), [tmp] + args)])
+                    case _:
+                        return node
+            def visit_FunRefArity(self, node):
+                self.generic_visit(node)
+                match node:
+                    case FunRefArity(f, n):
+                        return Tuple([FunRef(f)])
+                    case _:
+                        return node
+
+
+
+        assert(isinstance(p, Module))
+        # Why this does't work?
+        # new_body = RevealFunction(self).visit_Call(p)
+        # p.body = new_body
+
+        new_module = []
+        for f in p.body:
+            assert isinstance(f, FunctionDef)
+            closure_converter = ConvertToClosure(self)
+            new_body = []
+            for s in f.body:
+                new_body.append(closure_converter.visit(s))
+            new_module += closure_converter.newFunctionDefs
+            f.body = new_body
+            new_module.append(f)
+        
+
+        return Module(new_module)
 
     def limit_functions(self, p: Module) -> Module:
         """limit functions to 6 arguments, anything more gets put into a 6th tuple-type argument"""
@@ -279,7 +396,6 @@ class Compiler:
 
         # force the autograder to re-evaluate the types in function definition
         # should be removed in production
-        import type_check_Llambda
         type_check_Llambda.TypeCheckLlambda().type_check(p)
         return p
 
