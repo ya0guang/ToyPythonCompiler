@@ -411,8 +411,15 @@ def run1(prog):
     print("\n======= interpreting shrinked program")
     interp.interp(p_shrinked)
 
+    print("\n======= uniquifying program")
+    p_unique = compiler.uniquify(p_shrinked)
+    print("\n printing uniquified prog")
+    print(p_unique)
+    print("\n======= interpreting unique program")
+    interp.interp(p_unique)
+
     print("\n======= reveal functions")
-    p_revealed = compiler.reveal_functions(p_shrinked)
+    p_revealed = compiler.reveal_functions(p_unique)
     print(p_revealed)
 
     print("\n======= reveal functions AST")
@@ -421,15 +428,8 @@ def run1(prog):
     print("\n======= interpreting revealed functions program")
     interp.interp(p_revealed)
 
-    print("\n======= uniquifying program")
-    p_unique = compiler.uniquify(p_revealed)
-    print("\n printing uniquified prog")
-    print(p_unique)
-    print("\n======= interpreting unique program")
-    interp.interp(p_unique)
-
     print("\n======= limit functions")
-    p_limited = compiler.limit_functions(p_unique)
+    p_limited = compiler.limit_functions(p_revealed)
     print(p_limited)
 
     print("\n======= limit functions AST")

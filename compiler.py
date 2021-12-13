@@ -279,8 +279,8 @@ class Compiler:
 
         # force the autograder to re-evaluate the types in function definition
         # should be removed in production
-        import type_check_Lfun
-        type_check_Lfun.TypeCheckLfun().type_check(p)
+        import type_check_Llambda
+        type_check_Llambda.TypeCheckLlambda().type_check(p)
         return p
 
     def remove_complex_operands(self, p: Module) -> Module:
