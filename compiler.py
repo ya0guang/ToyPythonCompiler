@@ -103,6 +103,8 @@ class Compiler:
         return Module(new_module)
 
     def uniquify(self, p: Module) -> Module:
+        # this function should be able to be move to `CompileFunction` 
+        # if `self.num_uniquified_counter` is accessible by `CompileFunction`
 
         class Uniquify(NodeTransformer):
             
@@ -120,9 +122,12 @@ class Compiler:
                         for v in args:
                             new_v = v + "_" + str(self.outer_instance.num_uniquified_counter)
                             # find the new name in the previous mapping
-                            new_mapping[new_mapping[v]] = new_v
-                            # delete the old mapping
-                            del new_mapping[v]
+                            if v in new_mapping:
+                                new_mapping[new_mapping[v]] = new_v
+                                # delete the old mapping
+                                del new_mapping[v]
+                            else:
+                                new_mapping[v] = new_v
                             new_args.append(new_v)
                             self.outer_instance.num_uniquified_counter += 1
                         new_uniquifier = Uniquify(self.outer_instance, new_mapping)
@@ -167,6 +172,22 @@ class Compiler:
         
         return p
 
+    def convert_assignments(self, p: Module) -> Module:
+        assert(isinstance(p, Module))
+
+        for f in p.body:
+            assert(isinstance(f, FunctionDef))
+            self.function_compilers[f.name] = CompileFunction(f.name)
+            bounded_vars = set([v[0] for v in f.args])
+            print("DEBUG, bounded_vars: ", bounded_vars)
+            (f.body, af) = self.function_compilers[f.name].convert_assignments(f.body, bounded_vars)
+            
+            args = [v[0] for v in f.args]
+            for v in af:
+                if v in args:
+                    f.body.insert(0, Assign([Name(v + '_')], Tuple([Name(v)], Load())))
+        return p    
+    
     def reveal_functions(self, p: Module) -> Module:
         """change `Name(f)` to `FunRef(f)` for functions defined in the module"""
 
@@ -551,6 +572,108 @@ class CompileFunction:
                 raise Exception(
                     'error in extend_reg, unsupported register name ' + repr(r))
 
+    
+    ############################################################################
+    # Assignment Conversion
+    ############################################################################
+
+    def convert_assignments(self, p: list, bounded: set) -> tuple[list, list]:
+        """convert assignments to instructions"""
+
+        # def 
+
+        class AssignmentTraverse(NodeVisitor):
+
+            def __init__(self, bounded_vars: set):
+                self.bounded_vars = bounded_vars
+                self.free_vars = []
+                self.free_vars_lambda = {}
+                self.assigned_vars = []
+                super().__init__()
+
+            def visit_Assign(self, node):
+                # it doesn't matter if the Lambda node is traversed.
+                self.generic_visit(node)
+                match node:
+                    case Assign([Name(var)], _):
+                        # print("DEBUG, hit in visit_Assign, node: ", node)
+                        self.assigned_vars.append(var)
+
+            def visit_Lambda(self, node):
+                self.generic_visit(node)
+                match node:
+                    case Lambda(args, body_expr):
+                        # print("DEBUG, hit in visit_Lambda, node: ", node)
+                        new_assignment_converter = AssignmentTraverse(set(args))
+                        new_assignment_converter.visit_Name(body_expr)
+                        self.free_vars_lambda[node] = new_assignment_converter.free_vars
+                        return node
+                            
+            def visit_Name(self, node):
+                self.generic_visit(node)
+                match node:
+                    case Name(var):
+                        if var not in self.bounded_vars:
+                            self.free_vars.append(var)
+                        return Name(var)
+            
+            def visit_Call(self, node):
+                # mask visits to calls
+                pass
+        
+        class AssignmentConvert(NodeTransformer):
+            # convention: the varibales that are AssignmentConvert'ed are added a suffix '_'
+            
+            def __init__(self, af_vars: set):
+                self.af = af_vars
+                super().__init__()
+
+            def visit_Assign(self, node):
+                # print("DEBUG, visit_Assign, node: ", node)
+                match node:
+                    case Assign([Name(var)], rhs) if var in self.af:
+                        return Assign([Subscript(Name(var + '_'), Constant(0), Store())], self.generic_visit(rhs))
+                    case _:
+                        self.generic_visit(node)
+                        return node
+            
+            def visit_Name(self, node):
+                match node:
+                    case Name(var) if var in self.af:
+                        return Subscript(Name(var + '_'), Constant(0), Load())
+                    case _:
+                        self.generic_visit(node)
+                        return node
+                        
+                
+        assert(isinstance(p, list))
+
+        traverser = AssignmentTraverse(bounded)
+        for s in p:
+            traverser.visit(s)
+
+        assigned_vars = set(traverser.assigned_vars)
+        free_vars_in_lambda = []
+        for (_, vs) in traverser.free_vars_lambda.items():
+            free_vars_in_lambda += vs
+        free_vars_in_lambda = set(free_vars_in_lambda)
+
+        af_vars =  free_vars_in_lambda.intersection(assigned_vars)
+
+        print("TRACE, free_vars_in_lambda: ", free_vars_in_lambda)
+        print("TRACE, assigned_vars: ", assigned_vars)
+        print("TRACE, af_vars: ", af_vars)
+
+        converter = AssignmentConvert(af_vars)
+        new_p = []
+        for s in p:
+            new_s = converter.visit(s)
+            print("TRACE, converted s: ", new_s)
+            new_p.append(new_s)
+        
+        return (new_p, af_vars)
+
+    
     ############################################################################
     # Expose Allocation
     ############################################################################
