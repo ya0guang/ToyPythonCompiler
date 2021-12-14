@@ -78,6 +78,7 @@ class Compiler:
         # function -> {original_name: new_name}
         self.function_limit_renames = {}
         self.num_uniquified_counter = 0
+        self.closure_count: int = 0
         
 
     def shrink(self, p: Module) -> Module:
@@ -231,9 +232,6 @@ class Compiler:
 
             def __init__(self, outer: Compiler):
                 self.outer_instance = outer
-                self.lambdaCount = 0
-                self.fvsCount = 1
-                self.closureCount = 0
                 self.newFunctionDefs = []
                 self.bound_lambda_vars = {} # lambda_name : [bound vars (str)]
                 super().__init__()
@@ -288,10 +286,10 @@ class Compiler:
                 match node:
                     case Lambda(args, body_expr):
                         # generate names for lambda function and the closure arg
-                        name = "lambda_" + str(self.lambdaCount)
-                        self.lambdaCount += 1
-                        closureArgName = "fvs_" + str(self.fvsCount)
-                        self.fvsCount += 1
+                        name = "lambda_" + str(self.outer_instance.closure_count)
+                        self.outer_instance.closure_count += 1
+                        closureArgName = "fvs_" + str(self.outer_instance.closure_count)
+                        self.outer_instance.closure_count += 1
 
                         # add args to the bound list
                         self.bound_lambda_vars[name] = args
@@ -313,13 +311,6 @@ class Compiler:
                             argCt += 1
                         
                         newFunBody.append(Return(body_expr)) # body nodes already visited automatically with all the other nodes of the ast
-                        # print("ole bod type" + str(type(body_expr)))
-                        # # process the body expression for possible closure conversions
-                        # new_closure_converter = ConvertToClosure(self.outer_instance)
-                        # new_body_expr = new_closure_converter.visit(body_expr)
-                        # newFunBody.append(new_body_expr)
-                        # # print("new Bod: " + repr(new_body_expr))
-                        # print("new bod type" + str(type(new_body_expr)))
 
                         newFunArgs = [(closureArgName, TupleType(closureArgTypes))] # function args are (string, type)
                         
@@ -340,23 +331,13 @@ class Compiler:
                         return Tuple(closureLst, Load()) # return closure
                     case _:
                         return node
-                        
-                # self.generic_visit(node)
-                # match node:
-                #     case FunctionDef(name, args, body, dec_list, returnType):
-                #         new_args = []
-                #         for arg in args:
-                #             new_args.append((arg[0], translateType(arg[1])))
-                #         return FunctionDef(name, new_args, body, dec_list, translateType(returnType))
-                #     case _:
-                #         return node
 
             def visit_Call(self, node: Call):
                 self.generic_visit(node)
                 match node:
                     case Call(fun, args) if not (fun == Name('print') or fun == Name('len') or fun == Name('input_int')):
-                        tmp = "clos_" + str(self.closureCount)
-                        self.closureCount += 1
+                        tmp = "clos_" + str(self.outer_instance.closure_count)
+                        self.outer_instance.closure_count += 1
                         return Let(Name(tmp), fun, Call(Subscript(Name(tmp), Constant(0), Load()), [Name(tmp)] + args))
                     case _:
                         return node
@@ -380,26 +361,30 @@ class Compiler:
 
         assert(isinstance(p, Module))
         type_check_Llambda.TypeCheckLlambda().type_check(p)
-        # Why this does't work?
-        # new_body = RevealFunction(self).visit_Call(p)
-        # p.body = new_body
 
         new_module = []
         for f in p.body:
             assert isinstance(f, FunctionDef)
-            print("NEXT CONVERTER")
+            # process body
             closure_converter = ConvertToClosure(self)
             new_body = []
             for s in f.body:
                 new_body.append(closure_converter.visit(s))
-            new_module += closure_converter.newFunctionDefs
             f.body = new_body
+            # add possible created lambda functions to the module
+            new_module += closure_converter.newFunctionDefs
+            # add closure argument because all functions are now closures
+            closureArgName = "fvs_" + str(self.closure_count)
+            self.closure_count += 1
+            new_arg = [(closureArgName, Bottom())]
+            f.args = new_arg + f.args
             new_module.append(f)
-
-        # fix function def return types
-        new_new_module = []
             
-        def translateType(t):
+        new_new_module = [] # module with fixed return types
+
+        # repair return types of functions
+        def translateType(t): # TODO: fix for nested too (when make lambdas and return type)
+            """repair return types of functions"""
             match t:
                 case FunctionType(argTypes, returnType):
                     return TupleType([FunctionType( [TupleType([])] + argTypes, returnType)])

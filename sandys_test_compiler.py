@@ -388,6 +388,21 @@ t = f(0, 10)
 print(t(32))
 """
 
+lambda_with_regular_function = """
+def f(x:int, y:int) -> Callable[[int], int]:
+    g : Callable[[int],int] = (lambda x: x + y)
+    x = 3
+    return g
+
+def add1(a: int) -> int:
+    return a + 1
+
+print(add1(68))
+t = f(0, 10)
+print(t(32))
+"""
+
+
 lam_in_book = """
 def f(x : int) -> Callable[[int], int]:
     y = 4
@@ -419,7 +434,7 @@ print( g(11)(34) + h(15)(34) )
 
 progs = [IfElseProg, nestedIfsProg2, whileCaseFromBook, while_while, while_from_class, simple_tuple]
 
-prog = lambda_examp3
+prog = lambda_with_regular_function
 
 
 ############################################################################
@@ -473,18 +488,18 @@ def run1(prog):
     print("\n======= interpreting revealed functions program")
     interp.interp(p_revealed)
 
-    print("\n======= Assignment Conversion")
+    print("\n\n======= Assignment Conversion")
     p_assign_converted = compiler.convert_assignments(p_revealed)
     print(p_assign_converted)
 
     print("\n======= interpreting Assignment Conversion program")
     interp.interp(p_assign_converted)
 
-    print("\n======= Assignment Conversion AST")
-    print(p_assign_converted.__repr__())
+    # print("\n======= Assignment Conversion AST")
+    # print(p_assign_converted.__repr__())
 
 
-    print("\n======= Closure Conversion")
+    print("\n\n======= Closure Conversion")
     p_closure_converted = compiler.convert_to_closure(p_assign_converted)
     print("\n======= printing closured prog")
     print(p_closure_converted)
@@ -494,12 +509,14 @@ def run1(prog):
     print("\n======= interpreting Closured program")
     interp.interp(p_closure_converted)
 
-    print("\n======= Closure Conversion AST")
-    print(p_closure_converted.__repr__())
+    print("\n======= type checking Closured program")
+    typeCheck_L.type_check(p_closure_converted)
+    # print("\n======= Closure Conversion AST")
+    # print(p_closure_converted.__repr__())
 
 
     print("\n======= limit functions")
-    p_limited = compiler.limit_functions(p_revealed)
+    p_limited = compiler.limit_functions(p_closure_converted)
     print(p_limited)
 
     print("\n======= limit functions AST")
