@@ -431,11 +431,29 @@ print( g(11)(34) + h(15)(34) )
         # x,y
 # f : Callable[[int],int] = (lambda x: (lambda x + y))
 
+double_nested_lambdas = """
+def f(x : int) -> Callable[[int], Callable[[int], Callable[[int], int]]:
+    y = 4
+    return lambda z : (lambda a: lambda b: x + y) 
+
+g = f(5)
+h = f(3)
+print( g(11)(34)(1) + h(15)(34)(2) )
+"""
 
 progs = [IfElseProg, nestedIfsProg2, whileCaseFromBook, while_while, while_from_class, simple_tuple]
 
-prog = lambda_with_regular_function
+prog = nested_lambda
 
+# def lambda_4(fvs_5:tuple[bot,<class 'int'>,<class 'int'>], z_5:<class 'int'>) -> tuple[Callable[ [tuple[],<class 'int'>],       <class 'int'> ]]:
+
+# def f(fvs_6:bot, x_0:<class 'int'>, y_1:<class 'int'>, c_2:<class 'bool'>) -> tuple[Callable[ [tuple[],<class 'int'>],        Callable[[<class 'int'>], <class 'int'>] ]]:
+# def f(fvs_6:bot, x_0:<class 'int'>, y_1:<class 'int'>, c_2:<class 'bool'>) -> tuple[Callable[ [tuple[],<class 'int'>],        tuple[Callable[[tuple[],<class 'int'>], <class 'int'>]] ]]:
+    # w = (lambda_0(%rip), c_2,)                                                ret a tup whose  args are a tuple and an int and returns a tuple whose args are a tuple and an int and returns an int
+    # return (lambda_4(%rip), x_0, y_1,)
+# tuple([Callable([tuple([]), <class 'int'>],<class 'int'>)]) != Callable([<class 'int'>],<class 'int'>) in Tuple([FunRef(lambda_4), Name('x_0'), Name('y_1')])
+# correct != wrong in return of wrong
+# in reg def NOT DEF OF LAMBDA
 
 ############################################################################
 # Run

@@ -227,6 +227,16 @@ class Compiler:
         return p
 
     def convert_to_closure(self, p: Module) -> Module:
+        
+        def translateType(t): # TODO: fix for nested too (when make lambdas and return type)
+            """repair return types of functions"""
+            match t:
+                case FunctionType(argTypes, returnType):
+                    fixed_return = translateType(returnType)
+                    return TupleType( [FunctionType( [TupleType([])] + argTypes, fixed_return )] )
+                case _:
+                    return t
+        # TupleType( [FunctionType( [TupleType([])] + argTypes, returnType )] )
 
         class ConvertToClosure(NodeTransformer):
 
@@ -260,7 +270,7 @@ class Compiler:
                         """visit nested lambdas (now FunRefs) and put their args in bound_args"""
                         self.generic_visit(node)
                         match node:
-                            case FunRef(f) if "lambda" in f:
+                            case FunRef(f) if f.startswith('lambda_'):
                                 for v in self.outer_instance.bound_lambda_vars[f]:
                                     self.bound_args.append(Name(v))
                         return node
@@ -273,9 +283,8 @@ class Compiler:
                                 self.args_occurred.append(node)
                         return node
 
-                def free_vars(bodyNode, boundArgs: list[str]) -> list[Name]:
-                    # KEEP IN MIND: the args of a nested lambda expression is considered BOUND inside the outter lambda
-                    #  -- i.e. freeVars(outter_lambda) = {freeVars(inner_lambda)} - {outter_lambda_args}
+                def free_vars(boundArgs: list[str], bodyNode) -> list[Name]:
+                    """returns a list of the free variables of a lambda expression"""
                     free_vars_finder = FreeVars(self, boundArgs)
                     free_vars_finder.visit(bodyNode)
 
@@ -299,10 +308,8 @@ class Compiler:
                         closureArgTypes = [Bottom()]
                         newFunBody = []
                         argCt = 1
-                        print(name + "\n" + repr(body_expr))
-                        # print(" free variables:")
-                        # TODO: may have to translate body_expr before this because of nested lambdas?
-                        for v in free_vars(body_expr, args):
+                        
+                        for v in free_vars(args, body_expr):
                             # print("\t" + repr(v) + "\tType: " + str(v.has_type))
                             closureLst.append(v) # appending name nodes
                             closureArgTypes.append(v.has_type)
@@ -323,7 +330,8 @@ class Compiler:
                                     newFunArgs.append((arg, argTypes[i]))
                                     i += 1
                                 # create new function
-                                self.newFunctionDefs.append(FunctionDef(name, args=newFunArgs, body=newFunBody, decorator_list=[], returns=returnType))
+                                self.newFunctionDefs.append(FunctionDef(name, args=newFunArgs, body=newFunBody, decorator_list=[], returns=translateType(returnType)))
+                                print("LAMBDA,\t" + name + "\t" + str(translateType(returnType)))
                                 self.outer_instance.functions.append(name)
                             case _:
                                 raise Exception('error in visit_Lambda of closure conversion, unsupported lambda type ' + node.has_type)
@@ -366,6 +374,7 @@ class Compiler:
         for f in p.body:
             assert isinstance(f, FunctionDef)
             # process body
+            print("NEW CONVERTER")
             closure_converter = ConvertToClosure(self)
             new_body = []
             for s in f.body:
@@ -374,35 +383,41 @@ class Compiler:
             # add possible created lambda functions to the module
             new_module += closure_converter.newFunctionDefs
             # add closure argument because all functions are now closures
-            closureArgName = "fvs_" + str(self.closure_count)
-            self.closure_count += 1
-            new_arg = [(closureArgName, Bottom())]
-            f.args = new_arg + f.args
-            new_module.append(f)
+            if f.name != 'main':
+                closureArgName = "fvs_" + str(self.closure_count)
+                self.closure_count += 1
+                new_arg = [(closureArgName, Bottom())]
+                f.args = new_arg + f.args
+
             
-        new_new_module = [] # module with fixed return types
-
-        # repair return types of functions
-        def translateType(t): # TODO: fix for nested too (when make lambdas and return type)
-            """repair return types of functions"""
-            match t:
-                case FunctionType(argTypes, returnType):
-                    return TupleType([FunctionType( [TupleType([])] + argTypes, returnType)])
-                case _:
-                    return t
-
-        for f in new_module:
             match f:
                 case FunctionDef(name, args, body, dec_list, returnType):
                     new_args = []
                     for arg in args:
                         new_args.append((arg[0], translateType(arg[1])))
-                    new_new_module.append(FunctionDef(name, new_args, body, dec_list, translateType(returnType)))
+                    new_module.append(FunctionDef(name, new_args, body, dec_list, translateType(returnType)))
+                    print("outter,\t" + name + "\t" + str(translateType(returnType)) + "\n\tBefore:\t" + str(returnType))
                 case _:
                     print("ERROR in closure conversion")
-        
+            # new_module.append(f)
+            
+        # new_new_module = [] # module with fixed return types
 
-        return Module(new_new_module)
+        # # repair return types of functions
+
+        # for f in new_module:
+        #     match f:
+        #         case FunctionDef(name, args, body, dec_list, returnType):
+        #             new_args = []
+        #             for arg in args:
+        #                 new_args.append((arg[0], translateType(arg[1])))
+        #             new_new_module.append(FunctionDef(name, new_args, body, dec_list, translateType(returnType)))
+        #             print("outter,\t" + name + "\t" + str(translateType(returnType)) + "\n\tBefore:\t" + str(returnType))
+        #         case _:
+        #             print("ERROR in closure conversion")
+        # return Module(new_new_module)
+
+        return Module(new_module)
 
     def limit_functions(self, p: Module) -> Module:
         """limit functions to 6 arguments, anything more gets put into a 6th tuple-type argument"""
