@@ -341,15 +341,15 @@ class Compiler:
                     case _:
                         return node
                         
-                self.generic_visit(node)
-                match node:
-                    case FunctionDef(name, args, body, dec_list, returnType):
-                        new_args = []
-                        for arg in args:
-                            new_args.append((arg[0], translateType(arg[1])))
-                        return FunctionDef(name, new_args, body, dec_list, translateType(returnType))
-                    case _:
-                        return node
+                # self.generic_visit(node)
+                # match node:
+                #     case FunctionDef(name, args, body, dec_list, returnType):
+                #         new_args = []
+                #         for arg in args:
+                #             new_args.append((arg[0], translateType(arg[1])))
+                #         return FunctionDef(name, new_args, body, dec_list, translateType(returnType))
+                #     case _:
+                #         return node
 
             def visit_Call(self, node: Call):
                 self.generic_visit(node)
@@ -357,16 +357,23 @@ class Compiler:
                     case Call(fun, args) if not (fun == Name('print') or fun == Name('len') or fun == Name('input_int')):
                         tmp = "clos_" + str(self.closureCount)
                         self.closureCount += 1
-                        return Let(Name(tmp), Tuple([fun], Load()), Call(Subscript(Name(tmp), Constant(0), Load()), [Name(tmp)] + args))
+                        return Let(Name(tmp), fun, Call(Subscript(Name(tmp), Constant(0), Load()), [Name(tmp)] + args))
                     case _:
                         return node
 
-            # TODO: make sure this gets called during visit() (it's not in the list of visits)
-            def visit_FunRefArity(self, node):
+            def visit_FunRef(self, node):
                 self.generic_visit(node)
                 match node:
-                    case FunRefArity(f, n):
+                    case FunRef(f):
                         return Tuple([FunRef(f)], Load())
+                    case _:
+                        return node
+
+            def visit_AnnAssign(self, node):
+                self.generic_visit(node)
+                match node:
+                    case AnnAssign(var, t, exp, o):
+                        return Assign([var], exp)
                     case _:
                         return node
 
