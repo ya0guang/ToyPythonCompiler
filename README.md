@@ -27,4 +27,8 @@ This will produce a file named runtime.o. The -g flag is to tell the compiler to
 
 ## Test
 
-Please use `test_compiler.py` to check if python program source code can be processed be the compiler passes.
+Please use `run-tests.py` to check our test cases for lambda. Note: Certain passes cannot be checked and it will show that they are not successful (starting at select instructions), but just pay attention to the overall output of the program. Also, we have toggled on detailed output. To remove this change `util.py` set tracing = False
+
+## Final Project
+
+For the final project we implemented Chapter 8: Lexically Scoped Functions. This means we added Uniquify, Assignment Conversion, and Closure Conversion to our compiler. 
