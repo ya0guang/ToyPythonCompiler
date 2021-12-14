@@ -371,10 +371,46 @@ def f(x:int, y:int) -> Callable[[int], int]:
 print(f(0, 10)(32))
 """
 
+lambda_examp2 = """
+def f(x:int, y:int) -> Callable[[int], int]:
+    g : Callable[[int],int] = (lambda x: x + y)
+    x = 3
+    return g
+print(f(0, 10)(32))
+"""
+
+lam_in_book = """
+def f(x : int) -> Callable[[int], int]:
+    y = 4
+    return lambda z: x + y + z
+g = f(5)
+h = f(3)
+print( g(11) + h(15) )
+"""
+
+nested_lambda = """
+def f(x : int, y: int, c: bool) -> Callable[[int], Callable[[int], int]]:
+    w : Callable[[bool],bool] = (lambda b: c or b)
+    return lambda z: (lambda a: x + y + z + a) 
+
+g = f(5, 4, True)
+h = f(3, 4, False)
+print( g(11)(34) + h(15)(34) )
+"""
+
+# free in:
+    # lambda_0 (bool):
+        # c
+    # lambda_1 (inner):
+        # x,y,z
+    # lambda_2 (outter):
+        # x,y
+# f : Callable[[int],int] = (lambda x: (lambda x + y))
+
 
 progs = [IfElseProg, nestedIfsProg2, whileCaseFromBook, while_while, while_from_class, simple_tuple]
 
-prog = lambda_examp
+prog = nested_lambda
 
 
 ############################################################################
@@ -427,6 +463,31 @@ def run1(prog):
 
     print("\n======= interpreting revealed functions program")
     interp.interp(p_revealed)
+
+    print("\n======= Assignment Conversion")
+    p_assign_converted = compiler.convert_assignments(p_revealed)
+    print(p_assign_converted)
+
+    print("\n======= interpreting Assignment Conversion program")
+    interp.interp(p_assign_converted)
+
+    print("\n======= Assignment Conversion AST")
+    print(p_assign_converted.__repr__())
+
+
+    print("\n======= Closure Conversion")
+    p_closure_converted = compiler.convert_to_closure(p_assign_converted)
+    print("\n======= printing closured prog")
+    # print(p_closure_converted)
+    for f in p_closure_converted.body:
+        print(f.body[0])
+
+    print("\n======= interpreting Closured program")
+    interp.interp(p_closure_converted)
+
+    print("\n======= Closure Conversion AST")
+    print(p_closure_converted.__repr__())
+
 
     print("\n======= limit functions")
     p_limited = compiler.limit_functions(p_revealed)
@@ -528,3 +589,12 @@ def runAll():
 run1(prog)
 # runAll()
 
+# print(Name('yuh') == Name("yuh"))
+
+# x = 'hi'
+# match x:
+#     case i if isinstance(i, int):
+#         print("hello")
+# print("yes")
+
+# print("lambda" in 'lambda_0')

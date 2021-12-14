@@ -231,60 +231,110 @@ class Compiler:
 
             def __init__(self, outer: Compiler):
                 self.outer_instance = outer
-                super().__init__()
                 self.lambdaCount = 0
                 self.fvsCount = 1
                 self.closureCount = 0
                 self.newFunctionDefs = []
-        # main = FunctionDef('main', args=[], body=[], decorator_list=[], returns=int)
+                self.bound_lambda_vars = {} # lambda_name : [bound vars (str)]
+                super().__init__()
 
             def visit_Lambda(self, node):
-                def free_vars(body: list[stmt], boundArgs: list[str]) -> list[Name]:
-                    freeVars = []
-                    for node in body:
+                
+                class FreeVars(NodeTransformer):
+
+                    def __init__(self, outer: ConvertToClosure, boundArgs: list[str]):
+                        self.outer_instance = outer
+                        self.bound_args = [Name(v) for v in boundArgs]
+                        self.args_occurred: list[Name] = []
+                        super().__init__()
+
+                    # TODO: maybe delete the lambdas case
+                    def visit_Lambda(self, node):
+                        """visit nested lambdas and put their args in bound_args"""
                         self.generic_visit(node)
                         match node:
-                            case Name(var) if var not in boundArgs:
-                                freeVars.append(node)
-                            case _: # do nothing
-                                pass
+                            case Lambda(args, body_expr):
+                                for arg in args:
+                                    self.bound_args.append(Name(arg))
+                    
+                    def visit_FunRef(self, node):
+                        """visit nested lambdas (now FunRefs) and put their args in bound_args"""
+                        self.generic_visit(node)
+                        match node:
+                            case FunRef(f) if "lambda" in f:
+                                for v in self.outer_instance.bound_lambda_vars[f]:
+                                    self.bound_args.append(Name(v))
+
+                    def visit_Name(self, node):
+                        """put all non-(known)bound Name()s in args_occured"""
+                        self.generic_visit(node)
+                        match node:
+                            case Name(var) if node not in self.bound_args:
+                                self.args_occurred.append(node)
+
+                def free_vars(bodyNode, boundArgs: list[str]) -> list[Name]:
+                    # TODO: create either recursive match case of expressions OR a new class for this body with visit_Name
+                    # KEEP IN MIND: the args of a nested lambda expression is considered BOUND inside the outter lambda
+                    #  -- i.e. freeVars(outter_lambda) = {freeVars(inner_lambda)} - {outter_lambda_args}
+                    free_vars_finder = FreeVars(self, boundArgs)
+                    free_vars_finder.visit(bodyNode)
+
+                    freeVars = [v for v in free_vars_finder.args_occurred if v not in free_vars_finder.bound_args]
                     return freeVars
 
                 self.generic_visit(node)
                 match node:
                     case Lambda(args, body_expr):
+                        # generate names for lambda function and the closure arg
                         name = "lambda_" + str(self.lambdaCount)
                         self.lambdaCount += 1
                         closureArgName = "fvs_" + str(self.fvsCount)
                         self.fvsCount += 1
 
+                        # add args to the bound list
+                        self.bound_lambda_vars[name] = args
+
+                        # process free vars for closure and function def
                         closureLst = [FunRef(name)]
                         closureArgTypes = [Bottom()]
                         newFunBody = []
                         argCt = 1
+                        # print(name + "\n" + repr(body_expr))
+                        # print(" free variables:")
                         # TODO: may have to translate body_expr before this because of nested lambdas?
                         for v in free_vars(body_expr, args):
-                            closureLst.append(v)
+                            # print("\t" + repr(v) + "\tType: " + str(v.has_type))
+                            closureLst.append(v) # appending name nodes
                             closureArgTypes.append(v.has_type)
-                            newFunBody.append(Assign(v, Subscript(Name(closureArgName), Constant(argCt), Load())))
+                            # assign closure args to local variables in the new lambda function
+                            newFunBody.append(Assign([v], Subscript(Name(closureArgName), Constant(argCt), Load())))
                             argCt += 1
-
+                        
+                        # process the body expression for possible closure conversions
                         new_closure_converter = ConvertToClosure(self.outer_instance)
                         new_body_expr = new_closure_converter.visit(body_expr)
-                        newFunBody += new_body_expr
+                        newFunBody.append(new_body_expr)
 
-                        newFunArgs = [(closureArgName, TupleType(closureArgTypes))]
-                        for arg in args:
-                            newFunArgs.append((arg, arg.has_type))
+                        newFunArgs = [(closureArgName, TupleType(closureArgTypes))] # function args are (string, type)
+                        
+                        # create new typed function definition for the lambda
+                        match node.has_type:
+                            case FunctionType(argTypes, returnType):
+                                # put bound vars with types into args for new function
+                                i = 0
+                                for arg in args:
+                                    newFunArgs.append((arg, argTypes[i]))
+                                    i += 1
+                                # create new function
+                                self.newFunctionDefs.append(FunctionDef(name, args=newFunArgs, body=newFunBody, decorator_list=[], returns=returnType))
+                                self.outer_instance.functions.append(name)
+                            case _:
+                                raise Exception('error in visit_Lambda of closure conversion, unsupported lambda type ' + node.has_type)
 
-                        # TODO: figure out return type
-                        self.newFunctionDefs.append(FunctionDef(name, args=newFunArgs, body=newFunBody, decorator_list=[], returns=int))
-                        self.outer_instance.functions.append(name)
-
-                        return Closure(len(closureLst), closureLst)
+                        return Tuple(closureLst) # return closure
                     case _:
                         return node
-
+            
             def visit_FunctionDef(self, node):
                 def translateType(t):
                     match t:
@@ -301,15 +351,18 @@ class Compiler:
                         return FunctionDef(name, new_args, body, dec_list, translateType(returnType))
                     case _:
                         return node
+
             def visit_Call(self, node: Call):
                 self.generic_visit(node)
                 match node:
                     case Call(fun, args):
                         tmp = "clos_" + str(self.closureCount)
                         self.closureCount += 1
-                        return Let(tmp, fun, [Call(Subscript(Name(tmp), Constant(0)), [tmp] + args)])
+                        return Let(Name(tmp), fun, [Call(Subscript(Name(tmp), Constant(0), Load()), [Name(tmp)] + args)])
                     case _:
                         return node
+
+            # TODO: make sure this gets called during visit() (it's not in the list of visits)
             def visit_FunRefArity(self, node):
                 self.generic_visit(node)
                 match node:
@@ -319,8 +372,8 @@ class Compiler:
                         return node
 
 
-
         assert(isinstance(p, Module))
+        type_check_Llambda.TypeCheckLlambda().type_check(p)
         # Why this does't work?
         # new_body = RevealFunction(self).visit_Call(p)
         # p.body = new_body
@@ -328,6 +381,7 @@ class Compiler:
         new_module = []
         for f in p.body:
             assert isinstance(f, FunctionDef)
+            print("NEXT CONVERTER")
             closure_converter = ConvertToClosure(self)
             new_body = []
             for s in f.body:
