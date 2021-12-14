@@ -256,6 +256,7 @@ class Compiler:
                             case Lambda(args, body_expr):
                                 for arg in args:
                                     self.bound_args.append(Name(arg))
+                        return node
                     
                     def visit_FunRef(self, node):
                         """visit nested lambdas (now FunRefs) and put their args in bound_args"""
@@ -264,6 +265,7 @@ class Compiler:
                             case FunRef(f) if "lambda" in f:
                                 for v in self.outer_instance.bound_lambda_vars[f]:
                                     self.bound_args.append(Name(v))
+                        return node
 
                     def visit_Name(self, node):
                         """put all non-(known)bound Name()s in args_occured"""
@@ -271,9 +273,9 @@ class Compiler:
                         match node:
                             case Name(var) if node not in self.bound_args:
                                 self.args_occurred.append(node)
+                        return node
 
                 def free_vars(bodyNode, boundArgs: list[str]) -> list[Name]:
-                    # TODO: create either recursive match case of expressions OR a new class for this body with visit_Name
                     # KEEP IN MIND: the args of a nested lambda expression is considered BOUND inside the outter lambda
                     #  -- i.e. freeVars(outter_lambda) = {freeVars(inner_lambda)} - {outter_lambda_args}
                     free_vars_finder = FreeVars(self, boundArgs)
@@ -299,7 +301,7 @@ class Compiler:
                         closureArgTypes = [Bottom()]
                         newFunBody = []
                         argCt = 1
-                        # print(name + "\n" + repr(body_expr))
+                        print(name + "\n" + repr(body_expr))
                         # print(" free variables:")
                         # TODO: may have to translate body_expr before this because of nested lambdas?
                         for v in free_vars(body_expr, args):
@@ -310,10 +312,14 @@ class Compiler:
                             newFunBody.append(Assign([v], Subscript(Name(closureArgName), Constant(argCt), Load())))
                             argCt += 1
                         
-                        # process the body expression for possible closure conversions
-                        new_closure_converter = ConvertToClosure(self.outer_instance)
-                        new_body_expr = new_closure_converter.visit(body_expr)
-                        newFunBody.append(new_body_expr)
+                        newFunBody.append(Return(body_expr)) # body nodes already visited automatically with all the other nodes of the ast
+                        # print("ole bod type" + str(type(body_expr)))
+                        # # process the body expression for possible closure conversions
+                        # new_closure_converter = ConvertToClosure(self.outer_instance)
+                        # new_body_expr = new_closure_converter.visit(body_expr)
+                        # newFunBody.append(new_body_expr)
+                        # # print("new Bod: " + repr(new_body_expr))
+                        # print("new bod type" + str(type(new_body_expr)))
 
                         newFunArgs = [(closureArgName, TupleType(closureArgTypes))] # function args are (string, type)
                         
@@ -331,17 +337,10 @@ class Compiler:
                             case _:
                                 raise Exception('error in visit_Lambda of closure conversion, unsupported lambda type ' + node.has_type)
 
-                        return Tuple(closureLst) # return closure
+                        return Tuple(closureLst, Load()) # return closure
                     case _:
                         return node
-            
-            def visit_FunctionDef(self, node):
-                def translateType(t):
-                    match t:
-                        case FunctionType(argTypes, returnType):
-                            return TupleType([FunctionType( [TupleType([])])] + argTypes, returnType)
-                        case _:
-                            return t
+                        
                 self.generic_visit(node)
                 match node:
                     case FunctionDef(name, args, body, dec_list, returnType):
@@ -355,10 +354,10 @@ class Compiler:
             def visit_Call(self, node: Call):
                 self.generic_visit(node)
                 match node:
-                    case Call(fun, args):
+                    case Call(fun, args) if not (fun == Name('print') or fun == Name('len') or fun == Name('input_int')):
                         tmp = "clos_" + str(self.closureCount)
                         self.closureCount += 1
-                        return Let(Name(tmp), fun, [Call(Subscript(Name(tmp), Constant(0), Load()), [Name(tmp)] + args)])
+                        return Let(Name(tmp), Tuple([fun], Load()), Call(Subscript(Name(tmp), Constant(0), Load()), [Name(tmp)] + args))
                     case _:
                         return node
 
@@ -367,7 +366,7 @@ class Compiler:
                 self.generic_visit(node)
                 match node:
                     case FunRefArity(f, n):
-                        return Tuple([FunRef(f)])
+                        return Tuple([FunRef(f)], Load())
                     case _:
                         return node
 
@@ -389,9 +388,29 @@ class Compiler:
             new_module += closure_converter.newFunctionDefs
             f.body = new_body
             new_module.append(f)
+
+        # fix function def return types
+        new_new_module = []
+            
+        def translateType(t):
+            match t:
+                case FunctionType(argTypes, returnType):
+                    return TupleType([FunctionType( [TupleType([])] + argTypes, returnType)])
+                case _:
+                    return t
+
+        for f in new_module:
+            match f:
+                case FunctionDef(name, args, body, dec_list, returnType):
+                    new_args = []
+                    for arg in args:
+                        new_args.append((arg[0], translateType(arg[1])))
+                    new_new_module.append(FunctionDef(name, new_args, body, dec_list, translateType(returnType)))
+                case _:
+                    print("ERROR in closure conversion")
         
 
-        return Module(new_module)
+        return Module(new_new_module)
 
     def limit_functions(self, p: Module) -> Module:
         """limit functions to 6 arguments, anything more gets put into a 6th tuple-type argument"""

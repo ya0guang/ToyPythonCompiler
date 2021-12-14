@@ -379,6 +379,15 @@ def f(x:int, y:int) -> Callable[[int], int]:
 print(f(0, 10)(32))
 """
 
+lambda_examp3 = """
+def f(x:int, y:int) -> Callable[[int], int]:
+    g : Callable[[int],int] = (lambda x: x + y)
+    x = 3
+    return g
+t = f(0, 10)
+print(t(32))
+"""
+
 lam_in_book = """
 def f(x : int) -> Callable[[int], int]:
     y = 4
@@ -410,7 +419,7 @@ print( g(11)(34) + h(15)(34) )
 
 progs = [IfElseProg, nestedIfsProg2, whileCaseFromBook, while_while, while_from_class, simple_tuple]
 
-prog = nested_lambda
+prog = lambda_examp3
 
 
 ############################################################################
@@ -478,9 +487,9 @@ def run1(prog):
     print("\n======= Closure Conversion")
     p_closure_converted = compiler.convert_to_closure(p_assign_converted)
     print("\n======= printing closured prog")
-    # print(p_closure_converted)
-    for f in p_closure_converted.body:
-        print(f.body[0])
+    print(p_closure_converted)
+    # for f in p_closure_converted.body:
+    #     print(f.body[0])
 
     print("\n======= interpreting Closured program")
     interp.interp(p_closure_converted)
@@ -598,3 +607,6 @@ run1(prog)
 # print("yes")
 
 # print("lambda" in 'lambda_0')
+
+# print(Tuple([FunRef('yuh')]))
+# print(FunRefArity('yuh', 3))
