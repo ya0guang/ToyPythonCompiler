@@ -432,7 +432,7 @@ print( g(11)(34) + h(15)(34) )
 # f : Callable[[int],int] = (lambda x: (lambda x + y))
 
 double_nested_lambdas = """
-def f(x : int) -> Callable[[int], Callable[[int], Callable[[int], int]]:
+def f(x : int) -> Callable[[int], Callable[[int], Callable[[int], int]]]:
     y = 4
     return lambda z : (lambda a: lambda b: x + y) 
 
@@ -443,7 +443,7 @@ print( g(11)(34)(1) + h(15)(34)(2) )
 
 progs = [IfElseProg, nestedIfsProg2, whileCaseFromBook, while_while, while_from_class, simple_tuple]
 
-prog = nested_lambda
+prog = lambda_with_regular_function
 
 # def lambda_4(fvs_5:tuple[bot,<class 'int'>,<class 'int'>], z_5:<class 'int'>) -> tuple[Callable[ [tuple[],<class 'int'>],       <class 'int'> ]]:
 

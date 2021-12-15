@@ -104,11 +104,11 @@ class Compiler:
         return Module(new_module)
 
     def uniquify(self, p: Module) -> Module:
-        # this function should be able to be move to `CompileFunction` 
+        # this function should be able to be move to `CompileFunction`
         # if `self.num_uniquified_counter` is accessible by `CompileFunction`
 
         class Uniquify(NodeTransformer):
-            
+
             def __init__(self, outer: Compiler, mapping: dict):
                 self.outer_instance = outer
                 self.uniquify_mapping = mapping
@@ -121,7 +121,8 @@ class Compiler:
                         new_mapping = self.uniquify_mapping.copy()
                         new_args = []
                         for v in args:
-                            new_v = v + "_" + str(self.outer_instance.num_uniquified_counter)
+                            new_v = v + "_" + \
+                                str(self.outer_instance.num_uniquified_counter)
                             # find the new name in the previous mapping
                             if v in new_mapping:
                                 new_mapping[new_mapping[v]] = new_v
@@ -131,7 +132,8 @@ class Compiler:
                                 new_mapping[v] = new_v
                             new_args.append(new_v)
                             self.outer_instance.num_uniquified_counter += 1
-                        new_uniquifier = Uniquify(self.outer_instance, new_mapping)
+                        new_uniquifier = Uniquify(
+                            self.outer_instance, new_mapping)
                         new_body_expr = new_uniquifier.visit(body_expr)
                         return Lambda(new_args, new_body_expr)
                     case _:
@@ -148,7 +150,6 @@ class Compiler:
                     case _:
                         return node
 
-        
         def do_uniquify(stmts: list, uniquify_mapping: dict) -> list:
             """change the variable names of statements in place according to the uniquify_mapping"""
             uniquifier = Uniquify(self, uniquify_mapping)
@@ -156,7 +157,7 @@ class Compiler:
             for s in stmts:
                 new_body.append(uniquifier.visit(s))
             return new_body
-        
+
         assert(isinstance(p, Module))
 
         for f in p.body:
@@ -170,7 +171,7 @@ class Compiler:
                 self.num_uniquified_counter += 1
             f.args = new_args
             f.body = do_uniquify(f.body, uniquify_mapping)
-        
+
         return p
 
     def convert_assignments(self, p: Module) -> Module:
@@ -181,14 +182,20 @@ class Compiler:
             self.function_compilers[f.name] = CompileFunction(f.name)
             bounded_vars = set([v[0] for v in f.args])
             print("DEBUG, bounded_vars: ", bounded_vars)
-            (f.body, af) = self.function_compilers[f.name].convert_assignments(f.body, bounded_vars)
-            
+            (f.body, af) = self.function_compilers[f.name].convert_assignments(
+                f.body, bounded_vars)
+
             args = [v[0] for v in f.args]
             for v in af:
                 if v in args:
-                    f.body.insert(0, Assign([Name(v + '_')], Tuple([Name(v)], Load())))
-        return p    
-    
+                    f.body.insert(
+                        0, Assign([Name(v + '_')], Tuple([Name(v)], Load())))
+                else:
+                    # assign a dummy value
+                    f.body.insert(
+                        0, Assign([Name(v + '_')], Tuple([Constant(10086)], Load())))
+        return p
+
     def reveal_functions(self, p: Module) -> Module:
         """change `Name(f)` to `FunRef(f)` for functions defined in the module"""
 
@@ -652,7 +659,6 @@ class CompileFunction:
                 raise Exception(
                     'error in extend_reg, unsupported register name ' + repr(r))
 
-    
     ############################################################################
     # Assignment Conversion
     ############################################################################
@@ -660,7 +666,7 @@ class CompileFunction:
     def convert_assignments(self, p: list, bounded: set) -> tuple[list, list]:
         """convert assignments to instructions"""
 
-        # def 
+        # def
 
         class AssignmentTraverse(NodeVisitor):
 
@@ -684,11 +690,12 @@ class CompileFunction:
                 match node:
                     case Lambda(args, body_expr):
                         # print("DEBUG, hit in visit_Lambda, node: ", node)
-                        new_assignment_converter = AssignmentTraverse(set(args))
+                        new_assignment_converter = AssignmentTraverse(
+                            set(args))
                         new_assignment_converter.visit_Name(body_expr)
                         self.free_vars_lambda[node] = new_assignment_converter.free_vars
                         return node
-                            
+
             def visit_Name(self, node):
                 self.generic_visit(node)
                 match node:
@@ -696,14 +703,14 @@ class CompileFunction:
                         if var not in self.bounded_vars:
                             self.free_vars.append(var)
                         return Name(var)
-            
+
             def visit_Call(self, node):
                 # mask visits to calls
                 pass
-        
+
         class AssignmentConvert(NodeTransformer):
             # convention: the varibales that are AssignmentConvert'ed are added a suffix '_'
-            
+
             def __init__(self, af_vars: set):
                 self.af = af_vars
                 super().__init__()
@@ -716,7 +723,7 @@ class CompileFunction:
                     case _:
                         self.generic_visit(node)
                         return node
-            
+
             def visit_Name(self, node):
                 match node:
                     case Name(var) if var in self.af:
@@ -724,8 +731,7 @@ class CompileFunction:
                     case _:
                         self.generic_visit(node)
                         return node
-                        
-                
+
         assert(isinstance(p, list))
 
         traverser = AssignmentTraverse(bounded)
@@ -738,7 +744,7 @@ class CompileFunction:
             free_vars_in_lambda += vs
         free_vars_in_lambda = set(free_vars_in_lambda)
 
-        af_vars =  free_vars_in_lambda.intersection(assigned_vars)
+        af_vars = free_vars_in_lambda.intersection(assigned_vars)
 
         print("TRACE, free_vars_in_lambda: ", free_vars_in_lambda)
         print("TRACE, assigned_vars: ", assigned_vars)
@@ -750,10 +756,9 @@ class CompileFunction:
             new_s = converter.visit(s)
             print("TRACE, converted s: ", new_s)
             new_p.append(new_s)
-        
+
         return (new_p, af_vars)
 
-    
     ############################################################################
     # Expose Allocation
     ############################################################################
@@ -777,7 +782,6 @@ class CompileFunction:
         if_cond = Compare(BinOp(GlobalValue('free_ptr'), Add(), Constant(tup_bytes)), [
                           Lt()], [GlobalValue('fromspace_end')])
 
-        # TODO: Expr(Constant(0)) OK here?
         body.append(If(if_cond, [], [Collect(tup_bytes)]))
 
         var = Name("pyc_temp_tup_" + str(self.tup_temp_count))
@@ -1145,6 +1149,7 @@ class CompileFunction:
         return cont
 
     def explicate_control(self, p: Module) -> Dict:
+        # TODO: is this still needed? We need a trampoline
         cont = [Return(Constant(0))]
         label = label_name(self.name + 'start')
         match p:
@@ -1160,6 +1165,7 @@ class CompileFunction:
 
     def condition_abbr(cmp: cmpop) -> str:
         """covert the compare operation to an abbreviation in instruction"""
+        # TODO: what about `is`?
         match cmp:
             case Eq():
                 return 'e'
@@ -1193,7 +1199,6 @@ class CompileFunction:
         # pretending the variable will always be assigned
 
         def generate_tag(length: int, ts: List) -> int:
-            # TODO: complete this function
             """a helper function to generate the 64-bit tag based on the length of tuple and types"""
             # 1 bit to indicate forwarding (0) or not (1). If 0, then the header is the forwarding pointer.
             # 6 bits to store the length of the tuple (max of 50)
@@ -1597,7 +1602,8 @@ class CompileFunction:
                         for dest in CompileFunction.caller_saved:
                             if not dest == loc:
                                 self.int_graph.add_edge(loc, dest)
-                # TODO check this, not sure if it should be the same as Callq
+                # TODO: check this, not sure if it should be the same as Callq\
+                # TODO: should we consider `address` interfere with something?
                 case IndirectCallq(address, _num_args):
                     for loc in las:
                         for dest in CompileFunction.caller_saved:
