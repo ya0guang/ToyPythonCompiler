@@ -161,6 +161,7 @@ class Compiler:
         assert(isinstance(p, Module))
 
         for f in p.body:
+            assert(isinstance(f, FunctionDef))
             uniquify_mapping = {}
             new_args = []
             for v in f.args:

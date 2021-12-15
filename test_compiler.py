@@ -18,10 +18,35 @@ from interp_x86 import eval_x86
 # print( g(11) + h(15) )
 # """
 
+prog = """
+def foo(x: int, y: int, z: int) -> Callable[[int],int]:
+    x = 100
+    y = 200
+    bar: Callable[[int],int] = lambda x: x + y + z
+    z = 10
+    return bar
+z = 30
+print(foo(1, 2, z)(1))
+"""
+
 # prog = """
+# def add(x:int,y:int)-> int :
+#   return x + y
+# print(add(40, 2))
+# """
+
+# prog = """
+# def map(f : Callable[[int],int], 
+#         v : tuple[(int, int,)]) -> tuple[(int, int,)]:
+#   return (f(v[0]), f(v[1]),)
+
+# def inc(x:int) -> int:
+#   return x + 1
+
 # x = 1
 # y = (x,)
 # """
+
 
 prog = """
 def foo(x: int, y: int, z: int) -> Callable[[int],int]:
