@@ -543,7 +543,7 @@ def label_name(n: str) -> str:
     else:
         return n
     
-tracing = True
+tracing = False
 
 def enable_tracing():
     global tracing
@@ -698,7 +698,7 @@ def compile_and_test(compiler, compiler_name,
     pseudo_x86 = compiler.select_instructions(program)
     trace(pseudo_x86)
     trace("")
-    total_passes += 1
+    #total_passes += 1
     test_x86 = False
     if test_x86:
         successful_passes += \
@@ -709,7 +709,7 @@ def compile_and_test(compiler, compiler_name,
     almost_x86 = compiler.assign_homes(pseudo_x86)
     trace(almost_x86)
     trace("")
-    total_passes += 1
+    #total_passes += 1
     if test_x86:    
         successful_passes += \
             test_pass('assign homes', interp_x86, program_root, almost_x86,
@@ -719,7 +719,8 @@ def compile_and_test(compiler, compiler_name,
     x86 = compiler.patch_instructions(almost_x86)
     trace(x86)
     trace("")
-    total_passes += 1
+    #total_passes += 1 
+    #commented because successful passes doesn't imcrement for select instructions, assign homes, and patch instructions since we can't check if it is valid without complete x86
     if test_x86:    
         successful_passes += \
             test_pass('patch instructions', interp_x86, program_root, x86,

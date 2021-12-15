@@ -27,7 +27,14 @@ This will produce a file named runtime.o. The -g flag is to tell the compiler to
 
 ## Test
 
-Please use `run-tests.py` to check our test cases for lambda. Note: Certain passes cannot be checked and it will show that they are not successful (starting at select instructions), but just pay attention to the overall output of the program. Also, we have toggled on detailed output. To remove this change `util.py` set tracing = False
+Please use `run-tests.py` to check our test cases for lambda.
+use `python run-tests.py <chapter>`
+Where chapter is one of the chapters we've covered in the course:
+var, conditional, loop, tuple, function, lambda
+
+To test our lambda functionality run `python run-tests.py lambda`
+
+ Note: Certain passes cannot be checked and it will show that they are not successful (starting at select instructions), but just pay attention to the overall output of the program. Also, a detailed output (tracing) can be toggled on or off by commenting line enable_tracing(). 
 
 ## Final Project
 
