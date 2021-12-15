@@ -1,4 +1,4 @@
-def f(x : int) -> Callable[[int], Callable[[int], Callable[[int], int]]:
+def f(x : int) -> Callable[[int], Callable[[int], Callable[[int], int]]]:
     y = 4
     return lambda z : (lambda a: lambda b: x + y) 
 
