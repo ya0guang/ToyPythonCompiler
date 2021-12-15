@@ -543,7 +543,7 @@ def label_name(n: str) -> str:
     else:
         return n
     
-tracing = False
+tracing = True
 
 def enable_tracing():
     global tracing
@@ -898,3 +898,4 @@ def run_tests(lang, compiler, compiler_name, type_check_P, interp_P,
           + ' for compiler ' + compiler_name + ' on language ' + lang)
     print('passes: ' + repr(successful_passes) + '/' + repr(total_passes) \
           + ' for compiler ' + compiler_name + ' on language ' + lang)
+    print("results")
