@@ -1,6 +1,8 @@
 # ToyPythonCompiler
 For IU Compiler course
 
+Maintained by: Hongbo Chen, Sandy Wheeler, Louis Labuzienski
+
 ## Resources
 
 The framework of this repo is from [IUCompilerCourse/python-student-support-code](https://github.com/IUCompilerCourse/python-student-support-code).

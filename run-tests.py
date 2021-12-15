@@ -10,9 +10,17 @@ import type_check_Clambda
 from utils import run_tests, run_one_test, enable_tracing
 
 compiler = compiler.Compiler()
-enable_tracing() #comment this to see less information in the output
+#enable_tracing() #comment this to see less information in the output
 arg = sys.argv[1]
-run_tests(arg, compiler, arg, type_check_Llambda.TypeCheckLlambda().type_check, interp_Llambda.InterpLlambda().interp,type_check_Clambda.TypeCheckClambda().type_check, interp_Clambda.InterpClambda().interp)
+if arg == 'all':
+    run_tests('var', compiler, 'var', type_check_Llambda.TypeCheckLlambda().type_check, interp_Llambda.InterpLlambda().interp,type_check_Clambda.TypeCheckClambda().type_check, interp_Clambda.InterpClambda().interp)
+    run_tests('conditional', compiler, 'conditional', type_check_Llambda.TypeCheckLlambda().type_check, interp_Llambda.InterpLlambda().interp,type_check_Clambda.TypeCheckClambda().type_check, interp_Clambda.InterpClambda().interp)
+    run_tests('loop', compiler, 'loop', type_check_Llambda.TypeCheckLlambda().type_check, interp_Llambda.InterpLlambda().interp,type_check_Clambda.TypeCheckClambda().type_check, interp_Clambda.InterpClambda().interp)
+    run_tests('tuple', compiler, 'tuple', type_check_Llambda.TypeCheckLlambda().type_check, interp_Llambda.InterpLlambda().interp,type_check_Clambda.TypeCheckClambda().type_check, interp_Clambda.InterpClambda().interp)
+    run_tests('function', compiler, 'function', type_check_Llambda.TypeCheckLlambda().type_check, interp_Llambda.InterpLlambda().interp,type_check_Clambda.TypeCheckClambda().type_check, interp_Clambda.InterpClambda().interp)
+    run_tests('lambda', compiler, 'lambda', type_check_Llambda.TypeCheckLlambda().type_check, interp_Llambda.InterpLlambda().interp,type_check_Clambda.TypeCheckClambda().type_check, interp_Clambda.InterpClambda().interp)
+else:
+    run_tests(arg, compiler, arg, type_check_Llambda.TypeCheckLlambda().type_check, interp_Llambda.InterpLlambda().interp,type_check_Clambda.TypeCheckClambda().type_check, interp_Clambda.InterpClambda().interp)
 
 
 """ if False:
