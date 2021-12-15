@@ -34,4 +34,3 @@ else:
               type_check_Pvar.TypeCheckPvar().type_check_P,
               interp_Pvar.InterpPvar().interp_P,
               None) """
-

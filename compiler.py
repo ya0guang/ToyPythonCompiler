@@ -234,7 +234,7 @@ class Compiler:
 
         return p
 
-    def convert_to_closure(self, p: Module) -> Module:
+    def convert_to_closures(self, p: Module) -> Module:
         
         def translateType(t): # TODO: fix for nested too (when make lambdas and return type)
             """repair return types of functions"""
@@ -914,6 +914,11 @@ class CompileFunction:
                 temps = args_temps + funRef_temps
             case FunRef(f):
                 tail = e
+            case Let(var, rhs, let_body):
+                (tup_rcoed, tup_temps) = self.rco_exp(rhs, False)
+                new_body = self.letize(let_body)
+                tail = Let(var, tup_rcoed, new_body)
+                temps = tup_temps
             case _:
                 raise Exception(
                     'error in rco_exp, unsupported expression ' + repr(e))
@@ -1036,7 +1041,8 @@ class CompileFunction:
                 orelse_ss = self.explicate_assign(orelse, lhs, [trampoline])
                 return self.explicate_pred(test, body_ss, orelse_ss)
             case Let(var, let_rhs, let_body):
-                return [Assign([var], let_rhs)] + self.explicate_assign(let_body, lhs, []) + force(cont)
+                return self.explicate_assign(let_rhs, var, self.explicate_assign(let_body, lhs, []) + force(cont))
+                # return [Assign([var], let_rhs)] + self.explicate_assign(let_body, lhs, []) + force(cont)
             case Begin(body, result):
                 new_cont = [Assign([lhs], result)] + force(cont)
                 body_ss = self.explicate_stmts(body, new_cont)

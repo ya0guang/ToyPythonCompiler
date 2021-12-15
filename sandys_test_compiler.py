@@ -362,6 +362,12 @@ def inc(x : int) -> int:
 print( map(inc, (0, 41))[1] )
 """
 
+lambda_examp_simple = """
+f: Callable[[],int] = lambda : 42
+
+print(f())
+"""
+
 lambda_examp = """
 def f(x:int, y:int) -> Callable[[int], int]:
     g : Callable[[int],int] = (lambda x: x + y)
@@ -443,7 +449,7 @@ print( g(11)(34)(1) + h(15)(34)(2) )
 
 progs = [IfElseProg, nestedIfsProg2, whileCaseFromBook, while_while, while_from_class, simple_tuple]
 
-prog = lambda_with_regular_function
+prog = lambda_examp_simple
 
 # def lambda_4(fvs_5:tuple[bot,<class 'int'>,<class 'int'>], z_5:<class 'int'>) -> tuple[Callable[ [tuple[],<class 'int'>],       <class 'int'> ]]:
 
@@ -518,7 +524,7 @@ def run1(prog):
 
 
     print("\n\n======= Closure Conversion")
-    p_closure_converted = compiler.convert_to_closure(p_assign_converted)
+    p_closure_converted = compiler.convert_to_closures(p_assign_converted)
     print("\n======= printing closured prog")
     print(p_closure_converted)
     # for f in p_closure_converted.body:
