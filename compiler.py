@@ -10,6 +10,7 @@ import types
 from functools import *
 from typing import List, Set, Dict
 import typing
+import type_check_Llambda
 
 # Type notes
 Binding = typing.Tuple[Name, expr]
@@ -77,6 +78,7 @@ class Compiler:
         # function -> {original_name: new_name}
         self.function_limit_renames = {}
         self.num_uniquified_counter = 0
+        self.closure_count: int = 0
         
 
     def shrink(self, p: Module) -> Module:
@@ -102,9 +104,11 @@ class Compiler:
         return Module(new_module)
 
     def uniquify(self, p: Module) -> Module:
+        # this function should be able to be move to `CompileFunction`
+        # if `self.num_uniquified_counter` is accessible by `CompileFunction`
 
         class Uniquify(NodeTransformer):
-            
+
             def __init__(self, outer: Compiler, mapping: dict):
                 self.outer_instance = outer
                 self.uniquify_mapping = mapping
@@ -117,14 +121,19 @@ class Compiler:
                         new_mapping = self.uniquify_mapping.copy()
                         new_args = []
                         for v in args:
-                            new_v = v + "_" + str(self.outer_instance.num_uniquified_counter)
+                            new_v = v + "_" + \
+                                str(self.outer_instance.num_uniquified_counter)
                             # find the new name in the previous mapping
-                            new_mapping[new_mapping[v]] = new_v
-                            # delete the old mapping
-                            del new_mapping[v]
+                            if v in new_mapping:
+                                new_mapping[new_mapping[v]] = new_v
+                                # delete the old mapping
+                                del new_mapping[v]
+                            else:
+                                new_mapping[v] = new_v
                             new_args.append(new_v)
                             self.outer_instance.num_uniquified_counter += 1
-                        new_uniquifier = Uniquify(self.outer_instance, new_mapping)
+                        new_uniquifier = Uniquify(
+                            self.outer_instance, new_mapping)
                         new_body_expr = new_uniquifier.visit(body_expr)
                         return Lambda(new_args, new_body_expr)
                     case _:
@@ -141,7 +150,6 @@ class Compiler:
                     case _:
                         return node
 
-        
         def do_uniquify(stmts: list, uniquify_mapping: dict) -> list:
             """change the variable names of statements in place according to the uniquify_mapping"""
             uniquifier = Uniquify(self, uniquify_mapping)
@@ -149,7 +157,7 @@ class Compiler:
             for s in stmts:
                 new_body.append(uniquifier.visit(s))
             return new_body
-        
+
         assert(isinstance(p, Module))
 
         for f in p.body:
@@ -164,7 +172,29 @@ class Compiler:
                 self.num_uniquified_counter += 1
             f.args = new_args
             f.body = do_uniquify(f.body, uniquify_mapping)
-        
+
+        return p
+
+    def convert_assignments(self, p: Module) -> Module:
+        assert(isinstance(p, Module))
+
+        for f in p.body:
+            assert(isinstance(f, FunctionDef))
+            self.function_compilers[f.name] = CompileFunction(f.name)
+            bounded_vars = set([v[0] for v in f.args])
+            print("DEBUG, bounded_vars: ", bounded_vars)
+            (f.body, af) = self.function_compilers[f.name].convert_assignments(
+                f.body, bounded_vars)
+
+            args = [v[0] for v in f.args]
+            for v in af:
+                if v in args:
+                    f.body.insert(
+                        0, Assign([Name(v + '_')], Tuple([Name(v)], Load())))
+                else:
+                    # assign a dummy value
+                    f.body.insert(
+                        0, Assign([Name(v + '_')], Tuple([Constant(10086)], Load())))
         return p
 
     def reveal_functions(self, p: Module) -> Module:
@@ -200,7 +230,202 @@ class Compiler:
                 # print("DEBUG, new node: ", ast.dump(n))
             f.body = new_body
 
+        type_check_Llambda.TypeCheckLlambda().type_check(p)
+
         return p
+
+    def convert_to_closure(self, p: Module) -> Module:
+        
+        def translateType(t): # TODO: fix for nested too (when make lambdas and return type)
+            """repair return types of functions"""
+            match t:
+                case FunctionType(argTypes, returnType):
+                    fixed_return = translateType(returnType)
+                    return TupleType( [FunctionType( [TupleType([])] + argTypes, fixed_return )] )
+                case _:
+                    return t
+        # TupleType( [FunctionType( [TupleType([])] + argTypes, returnType )] )
+
+        class ConvertToClosure(NodeTransformer):
+
+            def __init__(self, outer: Compiler):
+                self.outer_instance = outer
+                self.newFunctionDefs = []
+                self.bound_lambda_vars = {} # lambda_name : [bound vars (str)]
+                super().__init__()
+
+            def visit_Lambda(self, node):
+                
+                class FreeVars(NodeTransformer):
+
+                    def __init__(self, outer: ConvertToClosure, boundArgs: list[str]):
+                        self.outer_instance = outer
+                        self.bound_args = [Name(v) for v in boundArgs]
+                        self.args_occurred: list[Name] = []
+                        super().__init__()
+
+                    # TODO: maybe delete the lambdas case
+                    def visit_Lambda(self, node):
+                        """visit nested lambdas and put their args in bound_args"""
+                        self.generic_visit(node)
+                        match node:
+                            case Lambda(args, body_expr):
+                                for arg in args:
+                                    self.bound_args.append(Name(arg))
+                        return node
+                    
+                    def visit_FunRef(self, node):
+                        """visit nested lambdas (now FunRefs) and put their args in bound_args"""
+                        self.generic_visit(node)
+                        match node:
+                            case FunRef(f) if f.startswith('lambda_'):
+                                for v in self.outer_instance.bound_lambda_vars[f]:
+                                    self.bound_args.append(Name(v))
+                        return node
+
+                    def visit_Name(self, node):
+                        """put all non-(known)bound Name()s in args_occured"""
+                        self.generic_visit(node)
+                        match node:
+                            case Name(var) if node not in self.bound_args:
+                                self.args_occurred.append(node)
+                        return node
+
+                def free_vars(boundArgs: list[str], bodyNode) -> list[Name]:
+                    """returns a list of the free variables of a lambda expression"""
+                    free_vars_finder = FreeVars(self, boundArgs)
+                    free_vars_finder.visit(bodyNode)
+
+                    freeVars = [v for v in free_vars_finder.args_occurred if v not in free_vars_finder.bound_args]
+                    return freeVars
+
+                self.generic_visit(node)
+                match node:
+                    case Lambda(args, body_expr):
+                        # generate names for lambda function and the closure arg
+                        name = "lambda_" + str(self.outer_instance.closure_count)
+                        self.outer_instance.closure_count += 1
+                        closureArgName = "fvs_" + str(self.outer_instance.closure_count)
+                        self.outer_instance.closure_count += 1
+
+                        # add args to the bound list
+                        self.bound_lambda_vars[name] = args
+
+                        # process free vars for closure and function def
+                        closureLst = [FunRef(name)]
+                        closureArgTypes = [Bottom()]
+                        newFunBody = []
+                        argCt = 1
+                        
+                        for v in free_vars(args, body_expr):
+                            # print("\t" + repr(v) + "\tType: " + str(v.has_type))
+                            closureLst.append(v) # appending name nodes
+                            closureArgTypes.append(v.has_type)
+                            # assign closure args to local variables in the new lambda function
+                            newFunBody.append(Assign([v], Subscript(Name(closureArgName), Constant(argCt), Load())))
+                            argCt += 1
+                        
+                        newFunBody.append(Return(body_expr)) # body nodes already visited automatically with all the other nodes of the ast
+
+                        newFunArgs = [(closureArgName, TupleType(closureArgTypes))] # function args are (string, type)
+                        
+                        # create new typed function definition for the lambda
+                        match node.has_type:
+                            case FunctionType(argTypes, returnType):
+                                # put bound vars with types into args for new function
+                                i = 0
+                                for arg in args:
+                                    newFunArgs.append((arg, argTypes[i]))
+                                    i += 1
+                                # create new function
+                                self.newFunctionDefs.append(FunctionDef(name, args=newFunArgs, body=newFunBody, decorator_list=[], returns=translateType(returnType)))
+                                print("LAMBDA,\t" + name + "\t" + str(translateType(returnType)))
+                                self.outer_instance.functions.append(name)
+                            case _:
+                                raise Exception('error in visit_Lambda of closure conversion, unsupported lambda type ' + node.has_type)
+
+                        return Tuple(closureLst, Load()) # return closure
+                    case _:
+                        return node
+
+            def visit_Call(self, node: Call):
+                self.generic_visit(node)
+                match node:
+                    case Call(fun, args) if not (fun == Name('print') or fun == Name('len') or fun == Name('input_int')):
+                        tmp = "clos_" + str(self.outer_instance.closure_count)
+                        self.outer_instance.closure_count += 1
+                        return Let(Name(tmp), fun, Call(Subscript(Name(tmp), Constant(0), Load()), [Name(tmp)] + args))
+                    case _:
+                        return node
+
+            def visit_FunRef(self, node):
+                self.generic_visit(node)
+                match node:
+                    case FunRef(f):
+                        return Tuple([FunRef(f)], Load())
+                    case _:
+                        return node
+
+            def visit_AnnAssign(self, node):
+                self.generic_visit(node)
+                match node:
+                    case AnnAssign(var, t, exp, o):
+                        return Assign([var], exp)
+                    case _:
+                        return node
+
+
+        assert(isinstance(p, Module))
+        type_check_Llambda.TypeCheckLlambda().type_check(p)
+
+        new_module = []
+        for f in p.body:
+            assert isinstance(f, FunctionDef)
+            # process body
+            print("NEW CONVERTER")
+            closure_converter = ConvertToClosure(self)
+            new_body = []
+            for s in f.body:
+                new_body.append(closure_converter.visit(s))
+            f.body = new_body
+            # add possible created lambda functions to the module
+            new_module += closure_converter.newFunctionDefs
+            # add closure argument because all functions are now closures
+            if f.name != 'main':
+                closureArgName = "fvs_" + str(self.closure_count)
+                self.closure_count += 1
+                new_arg = [(closureArgName, Bottom())]
+                f.args = new_arg + f.args
+
+            
+            match f:
+                case FunctionDef(name, args, body, dec_list, returnType):
+                    new_args = []
+                    for arg in args:
+                        new_args.append((arg[0], translateType(arg[1])))
+                    new_module.append(FunctionDef(name, new_args, body, dec_list, translateType(returnType)))
+                    print("outter,\t" + name + "\t" + str(translateType(returnType)) + "\n\tBefore:\t" + str(returnType))
+                case _:
+                    print("ERROR in closure conversion")
+            # new_module.append(f)
+            
+        # new_new_module = [] # module with fixed return types
+
+        # # repair return types of functions
+
+        # for f in new_module:
+        #     match f:
+        #         case FunctionDef(name, args, body, dec_list, returnType):
+        #             new_args = []
+        #             for arg in args:
+        #                 new_args.append((arg[0], translateType(arg[1])))
+        #             new_new_module.append(FunctionDef(name, new_args, body, dec_list, translateType(returnType)))
+        #             print("outter,\t" + name + "\t" + str(translateType(returnType)) + "\n\tBefore:\t" + str(returnType))
+        #         case _:
+        #             print("ERROR in closure conversion")
+        # return Module(new_new_module)
+
+        return Module(new_module)
 
     def limit_functions(self, p: Module) -> Module:
         """limit functions to 6 arguments, anything more gets put into a 6th tuple-type argument"""
@@ -280,8 +505,7 @@ class Compiler:
 
         # force the autograder to re-evaluate the types in function definition
         # should be removed in production
-        import type_check_Lfun
-        type_check_Lfun.TypeCheckLfun().type_check(p)
+        type_check_Llambda.TypeCheckLlambda().type_check(p)
         return p
 
     def remove_complex_operands(self, p: Module) -> Module:
@@ -437,6 +661,106 @@ class CompileFunction:
                     'error in extend_reg, unsupported register name ' + repr(r))
 
     ############################################################################
+    # Assignment Conversion
+    ############################################################################
+
+    def convert_assignments(self, p: list, bounded: set) -> tuple[list, list]:
+        """convert assignments to instructions"""
+
+        # def
+
+        class AssignmentTraverse(NodeVisitor):
+
+            def __init__(self, bounded_vars: set):
+                self.bounded_vars = bounded_vars
+                self.free_vars = []
+                self.free_vars_lambda = {}
+                self.assigned_vars = []
+                super().__init__()
+
+            def visit_Assign(self, node):
+                # it doesn't matter if the Lambda node is traversed.
+                self.generic_visit(node)
+                match node:
+                    case Assign([Name(var)], _):
+                        # print("DEBUG, hit in visit_Assign, node: ", node)
+                        self.assigned_vars.append(var)
+
+            def visit_Lambda(self, node):
+                self.generic_visit(node)
+                match node:
+                    case Lambda(args, body_expr):
+                        # print("DEBUG, hit in visit_Lambda, node: ", node)
+                        new_assignment_converter = AssignmentTraverse(
+                            set(args))
+                        new_assignment_converter.visit_Name(body_expr)
+                        self.free_vars_lambda[node] = new_assignment_converter.free_vars
+                        return node
+
+            def visit_Name(self, node):
+                self.generic_visit(node)
+                match node:
+                    case Name(var):
+                        if var not in self.bounded_vars:
+                            self.free_vars.append(var)
+                        return Name(var)
+
+            def visit_Call(self, node):
+                # mask visits to calls
+                pass
+
+        class AssignmentConvert(NodeTransformer):
+            # convention: the varibales that are AssignmentConvert'ed are added a suffix '_'
+
+            def __init__(self, af_vars: set):
+                self.af = af_vars
+                super().__init__()
+
+            def visit_Assign(self, node):
+                # print("DEBUG, visit_Assign, node: ", node)
+                match node:
+                    case Assign([Name(var)], rhs) if var in self.af:
+                        return Assign([Subscript(Name(var + '_'), Constant(0), Store())], self.generic_visit(rhs))
+                    case _:
+                        self.generic_visit(node)
+                        return node
+
+            def visit_Name(self, node):
+                match node:
+                    case Name(var) if var in self.af:
+                        return Subscript(Name(var + '_'), Constant(0), Load())
+                    case _:
+                        self.generic_visit(node)
+                        return node
+
+        assert(isinstance(p, list))
+
+        traverser = AssignmentTraverse(bounded)
+        for s in p:
+            traverser.visit(s)
+
+        assigned_vars = set(traverser.assigned_vars)
+        free_vars_in_lambda = []
+        for (_, vs) in traverser.free_vars_lambda.items():
+            free_vars_in_lambda += vs
+        free_vars_in_lambda = set(free_vars_in_lambda)
+
+        af_vars = free_vars_in_lambda.intersection(assigned_vars)
+
+        print("TRACE, free_vars_in_lambda: ", free_vars_in_lambda)
+        print("TRACE, assigned_vars: ", assigned_vars)
+        print("TRACE, af_vars: ", af_vars)
+
+        converter = AssignmentConvert(af_vars)
+        new_p = []
+        for s in p:
+            new_s = converter.visit(s)
+            print("TRACE, converted s: ", new_s)
+            new_p.append(new_s)
+
+        return (new_p, af_vars)
+
+    ############################################################################
     # Expose Allocation
     ############################################################################
 
@@ -459,7 +783,6 @@ class CompileFunction:
         if_cond = Compare(BinOp(GlobalValue('free_ptr'), Add(), Constant(tup_bytes)), [
                           Lt()], [GlobalValue('fromspace_end')])
 
-        # TODO: Expr(Constant(0)) OK here?
         body.append(If(if_cond, [], [Collect(tup_bytes)]))
 
         var = Name("pyc_temp_tup_" + str(self.tup_temp_count))
@@ -827,6 +1150,7 @@ class CompileFunction:
         return cont
 
     def explicate_control(self, p: Module) -> Dict:
+        # TODO: is this still needed? We need a trampoline
         cont = [Return(Constant(0))]
         label = label_name(self.name + 'start')
         match p:
@@ -842,6 +1166,7 @@ class CompileFunction:
 
     def condition_abbr(cmp: cmpop) -> str:
         """covert the compare operation to an abbreviation in instruction"""
+        # TODO: what about `is`?
         match cmp:
             case Eq():
                 return 'e'
@@ -875,7 +1200,6 @@ class CompileFunction:
         # pretending the variable will always be assigned
 
         def generate_tag(length: int, ts: List) -> int:
-            # TODO: complete this function
             """a helper function to generate the 64-bit tag based on the length of tuple and types"""
             # 1 bit to indicate forwarding (0) or not (1). If 0, then the header is the forwarding pointer.
             # 6 bits to store the length of the tuple (max of 50)
@@ -1279,7 +1603,8 @@ class CompileFunction:
                         for dest in CompileFunction.caller_saved:
                             if not dest == loc:
                                 self.int_graph.add_edge(loc, dest)
-                # TODO check this, not sure if it should be the same as Callq
+                # TODO: check this, not sure if it should be the same as Callq\
+                # TODO: should we consider `address` interfere with something?
                 case IndirectCallq(address, _num_args):
                     for loc in las:
                         for dest in CompileFunction.caller_saved:

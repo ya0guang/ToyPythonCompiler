@@ -8,6 +8,15 @@ import interp_Clambda
 
 from interp_x86 import eval_x86
 
+# prog = """
+# def f(x : int) -> Callable[[int], int]:
+#     y = 4
+#     return lambda z: x + y + z
+
+# g = f(5)
+# h = f(3)
+# print( g(11) + h(15) )
+# """
 
 prog = """
 def foo(x: int, y: int, z: int) -> Callable[[int],int]:
@@ -16,7 +25,36 @@ def foo(x: int, y: int, z: int) -> Callable[[int],int]:
     bar: Callable[[int],int] = lambda x: x + y + z
     z = 10
     return bar
+z = 30
+print(foo(1, 2, z)(1))
+"""
 
+# prog = """
+# def add(x:int,y:int)-> int :
+#   return x + y
+# print(add(40, 2))
+# """
+
+# prog = """
+# def map(f : Callable[[int],int], 
+#         v : tuple[(int, int,)]) -> tuple[(int, int,)]:
+#   return (f(v[0]), f(v[1]),)
+
+# def inc(x:int) -> int:
+#   return x + 1
+
+# x = 1
+# y = (x,)
+# """
+
+
+prog = """
+def foo(x: int, y: int, z: int) -> Callable[[int],int]:
+    x = 100
+    y = 200
+    bar: Callable[[int],int] = lambda x: x + y + z
+    z = 10
+    return bar
 z = 30
 print(foo(1, 2, z)(1))
 """
@@ -214,8 +252,11 @@ interp = interp_Llambda.InterpLlambda()
 
 p = parse(prog)
 
-print("\n======= AST of the original program")
+print("\n======= original program")
 print(p)
+
+print("\n======= AST of the original program")
+print(ast.dump(p))
 
 type_check_Llambda.TypeCheckLlambda().type_check(p)
 print("\n======= type check passes")
@@ -250,6 +291,16 @@ print(p_revealed.__repr__())
 
 print("\n======= interpreting revealed functions program")
 interp.interp(p_revealed)
+
+print("\n======= Assignment Conversion")
+p_assign_converted = compiler.convert_assignments(p_revealed)
+print(p_assign_converted)
+
+print("\n======= interpreting Assignment Conversion program")
+interp.interp(p_assign_converted)
+
+print("\n======= Assignment Conversion AST")
+print(p_assign_converted.__repr__())
 
 print("\n======= limit functions")
 p_limited = compiler.limit_functions(p_revealed)

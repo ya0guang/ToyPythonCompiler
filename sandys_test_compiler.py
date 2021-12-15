@@ -21,6 +21,11 @@ import interp_Cif
 import interp_Pvar
 from interp_x86 import eval_x86
 
+import type_check_Llambda
+import type_check_Clambda
+import interp_Llambda
+import interp_Clambda
+
 # test program here
 # prog = """
 # a = 20 + - 30
@@ -349,25 +354,119 @@ n = 7
 print(sum(n, 0) + 36)
 """
 
-def sum(x:int,s:int)-> int :
-    return (s if x == 0 else sum(x - 1, x + s))
-n = 7
-print(sum(n, 0) + 36)
+we_be_buggin = """
+def map(f : Callable[[int], int], v : tuple[int,int]) -> tuple[int,int]:
+    return f(v[0]), f(v[1])
+def inc(x : int) -> int:
+    return x + 1
+print( map(inc, (0, 41))[1] )
+"""
 
+lambda_examp = """
+def f(x:int, y:int) -> Callable[[int], int]:
+    g : Callable[[int],int] = (lambda x: x + y)
+    h : Callable[[int],int] = (lambda y: x + y)
+    x = 3
+    return g
+print(f(0, 10)(32))
+"""
+
+lambda_examp2 = """
+def f(x:int, y:int) -> Callable[[int], int]:
+    g : Callable[[int],int] = (lambda x: x + y)
+    x = 3
+    return g
+print(f(0, 10)(32))
+"""
+
+lambda_examp3 = """
+def f(x:int, y:int) -> Callable[[int], int]:
+    g : Callable[[int],int] = (lambda x: x + y)
+    x = 3
+    return g
+t = f(0, 10)
+print(t(32))
+"""
+
+lambda_with_regular_function = """
+def f(x:int, y:int) -> Callable[[int], int]:
+    g : Callable[[int],int] = (lambda x: x + y)
+    x = 3
+    return g
+
+def add1(a: int) -> int:
+    return a + 1
+
+print(add1(68))
+t = f(0, 10)
+print(t(32))
+"""
+
+
+lam_in_book = """
+def f(x : int) -> Callable[[int], int]:
+    y = 4
+    return lambda z: x + y + z
+g = f(5)
+h = f(3)
+print( g(11) + h(15) )
+"""
+
+nested_lambda = """
+def f(x : int, y: int, c: bool) -> Callable[[int], Callable[[int], int]]:
+    w : Callable[[bool],bool] = (lambda b: c or b)
+    return lambda z: (lambda a: x + y + z + a) 
+
+g = f(5, 4, True)
+h = f(3, 4, False)
+print( g(11)(34) + h(15)(34) )
+"""
+
+# free in:
+    # lambda_0 (bool):
+        # c
+    # lambda_1 (inner):
+        # x,y,z
+    # lambda_2 (outter):
+        # x,y
+# f : Callable[[int],int] = (lambda x: (lambda x + y))
+
+double_nested_lambdas = """
+def f(x : int) -> Callable[[int], Callable[[int], Callable[[int], int]]]:
+    y = 4
+    return lambda z : (lambda a: lambda b: x + y) 
+
+g = f(5)
+h = f(3)
+print( g(11)(34)(1) + h(15)(34)(2) )
+"""
 
 progs = [IfElseProg, nestedIfsProg2, whileCaseFromBook, while_while, while_from_class, simple_tuple]
 
-prog = tail_if_fun
+prog = lambda_with_regular_function
 
+# def lambda_4(fvs_5:tuple[bot,<class 'int'>,<class 'int'>], z_5:<class 'int'>) -> tuple[Callable[ [tuple[],<class 'int'>],       <class 'int'> ]]:
+
+# def f(fvs_6:bot, x_0:<class 'int'>, y_1:<class 'int'>, c_2:<class 'bool'>) -> tuple[Callable[ [tuple[],<class 'int'>],        Callable[[<class 'int'>], <class 'int'>] ]]:
+# def f(fvs_6:bot, x_0:<class 'int'>, y_1:<class 'int'>, c_2:<class 'bool'>) -> tuple[Callable[ [tuple[],<class 'int'>],        tuple[Callable[[tuple[],<class 'int'>], <class 'int'>]] ]]:
+    # w = (lambda_0(%rip), c_2,)                                                ret a tup whose  args are a tuple and an int and returns a tuple whose args are a tuple and an int and returns an int
+    # return (lambda_4(%rip), x_0, y_1,)
+# tuple([Callable([tuple([]), <class 'int'>],<class 'int'>)]) != Callable([<class 'int'>],<class 'int'>) in Tuple([FunRef(lambda_4), Name('x_0'), Name('y_1')])
+# correct != wrong in return of wrong
+# in reg def NOT DEF OF LAMBDA
 
 ############################################################################
 # Run
 ############################################################################
 
-interp = interp_Lfun.InterpLfun()
+interp = interp_Llambda.InterpLlambda()
 # interp = interp_Ltup.InterpLtup()
 # interp = interp_Pif.InterpPif()
 # interp = interp_Pvar.InterpPvar()
+interp_C = interp_Clambda.InterpClambda()
+
+typeCheck_L = type_check_Llambda.TypeCheckLlambda()
+typeCheck_C = type_check_Clambda.TypeCheckClambda()
 
 def run1(prog):
 
@@ -376,7 +475,7 @@ def run1(prog):
     print("\n======= AST of the original program")
     print(p)
 
-    type_check_Lfun.TypeCheckLfun().type_check(p)
+    typeCheck_L.type_check(p)
     print("\n======= type check passes")
 
     # print("\n======= interpreting original program")
@@ -390,8 +489,15 @@ def run1(prog):
     print("\n======= interpreting shrinked program")
     interp.interp(p_shrinked)
 
+    print("\n======= uniquifying program")
+    p_unique = compiler.uniquify(p_shrinked)
+    print("\n printing uniquified prog")
+    print(p_unique)
+    print("\n======= interpreting unique program")
+    interp.interp(p_unique)
+
     print("\n======= reveal functions")
-    p_revealed = compiler.reveal_functions(p_shrinked)
+    p_revealed = compiler.reveal_functions(p_unique)
     print(p_revealed)
 
     print("\n======= reveal functions AST")
@@ -400,8 +506,35 @@ def run1(prog):
     print("\n======= interpreting revealed functions program")
     interp.interp(p_revealed)
 
+    print("\n\n======= Assignment Conversion")
+    p_assign_converted = compiler.convert_assignments(p_revealed)
+    print(p_assign_converted)
+
+    print("\n======= interpreting Assignment Conversion program")
+    interp.interp(p_assign_converted)
+
+    # print("\n======= Assignment Conversion AST")
+    # print(p_assign_converted.__repr__())
+
+
+    print("\n\n======= Closure Conversion")
+    p_closure_converted = compiler.convert_to_closure(p_assign_converted)
+    print("\n======= printing closured prog")
+    print(p_closure_converted)
+    # for f in p_closure_converted.body:
+    #     print(f.body[0])
+
+    print("\n======= interpreting Closured program")
+    interp.interp(p_closure_converted)
+
+    print("\n======= type checking Closured program")
+    typeCheck_L.type_check(p_closure_converted)
+    # print("\n======= Closure Conversion AST")
+    # print(p_closure_converted.__repr__())
+
+
     print("\n======= limit functions")
-    p_limited = compiler.limit_functions(p_revealed)
+    p_limited = compiler.limit_functions(p_closure_converted)
     print(p_limited)
 
     print("\n======= limit functions AST")
@@ -409,7 +542,7 @@ def run1(prog):
 
     print("\n======= interpreting limit functions program")
     interp.interp(p_limited)
-    type_check_Lfun.TypeCheckLfun().type_check(p_limited)
+    typeCheck_L.type_check(p_limited)
 
     print("\n======= doing RCO")
     p_rcoed = compiler.remove_complex_operands(p_limited)
@@ -430,12 +563,11 @@ def run1(prog):
     print(p_exped)
 
     print("\n======= type checking EXPed program")
-    type_check_Cfun.TypeCheckCfun().type_check(p_exped)
+    typeCheck_C.type_check(p_exped)
 
 
     print("\n======= interpreting EXPed program")
-    cif_interp = interp_Cfun.InterpCfun()
-    cif_interp.interp(p_exped)
+    interp_C.interp(p_exped)
 
     print("\n======= selecting instructions")
     p_x64 = compiler.select_instructions(p_exped)
@@ -501,3 +633,15 @@ def runAll():
 run1(prog)
 # runAll()
 
+# print(Name('yuh') == Name("yuh"))
+
+# x = 'hi'
+# match x:
+#     case i if isinstance(i, int):
+#         print("hello")
+# print("yes")
+
+# print("lambda" in 'lambda_0')
+
+# print(Tuple([FunRef('yuh')]))
+# print(FunRefArity('yuh', 3))
