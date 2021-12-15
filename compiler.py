@@ -914,13 +914,11 @@ class CompileFunction:
                 temps = args_temps + funRef_temps
             case FunRef(f):
                 tail = e
-            case Let(var, rhs, subscript):
+            case Let(var, rhs, let_body):
                 (tup_rcoed, tup_temps) = self.rco_exp(rhs, False)
-                tail = Let(var, tup_rcoed, subscript)
+                new_body = self.letize(let_body)
+                tail = Let(var, tup_rcoed, new_body)
                 temps = tup_temps
-                # (subscript_rcoed, subscript_temps) = self.rco_exp(subscript, False)
-                # tail = Let(name, tup_rcoed, subscript_rcoed)
-                # temps = tup_temps + subscript_temps
             case _:
                 raise Exception(
                     'error in rco_exp, unsupported expression ' + repr(e))

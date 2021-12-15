@@ -8,6 +8,11 @@ import interp_Clambda
 
 from interp_x86 import eval_x86
 
+prog = """
+f: Callable[[],int] = lambda : 42
+print(f())
+"""
+
 # prog = """
 # def f(x : int) -> Callable[[int], int]:
 #     y = 4
@@ -18,16 +23,16 @@ from interp_x86 import eval_x86
 # print( g(11) + h(15) )
 # """
 
-prog = """
-def foo(x: int, y: int, z: int) -> Callable[[int],int]:
-    x = 100
-    y = 200
-    bar: Callable[[int],int] = lambda x: x + y + z
-    z = 10
-    return bar
-z = 30
-print(foo(1, 2, z)(1))
-"""
+# prog = """
+# def foo(x: int, y: int, z: int) -> Callable[[int],int]:
+#     x = 100
+#     y = 200
+#     bar: Callable[[int],int] = lambda x: x + y + z
+#     z = 10
+#     return bar
+# z = 30
+# print(foo(1, 2, z)(1))
+# """
 
 # prog = """
 # def add(x:int,y:int)-> int :
@@ -48,16 +53,16 @@ print(foo(1, 2, z)(1))
 # """
 
 
-prog = """
-def foo(x: int, y: int, z: int) -> Callable[[int],int]:
-    x = 100
-    y = 200
-    bar: Callable[[int],int] = lambda x: x + y + z
-    z = 10
-    return bar
-z = 30
-print(foo(1, 2, z)(1))
-"""
+# prog = """
+# def foo(x: int, y: int, z: int) -> Callable[[int],int]:
+#     x = 100
+#     y = 200
+#     bar: Callable[[int],int] = lambda x: x + y + z
+#     z = 10
+#     return bar
+# z = 30
+# print(foo(1, 2, z)(1))
+# """
 
 # prog = """
 # def add(x:int,y:int)-> int :
@@ -302,8 +307,15 @@ interp.interp(p_assign_converted)
 print("\n======= Assignment Conversion AST")
 print(p_assign_converted.__repr__())
 
+
+print("\n\n======= Closure Conversion")
+p_closure_converted = compiler.convert_to_closures(p_assign_converted)
+
+print("\n======= printing closured prog")
+print(p_closure_converted)
+
 print("\n======= limit functions")
-p_limited = compiler.limit_functions(p_revealed)
+p_limited = compiler.limit_functions(p_closure_converted)
 print(p_limited)
 
 print("\n======= limit functions AST")
