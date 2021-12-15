@@ -100,7 +100,7 @@ class Compiler:
 
         main.body.append(Return(Constant(0)))
         new_module.append(main)
-        print("DEBUG, new module: ", new_module)
+        # print("DEBUG, new module: ", new_module)
         return Module(new_module)
 
     def uniquify(self, p: Module) -> Module:
@@ -165,7 +165,7 @@ class Compiler:
             uniquify_mapping = {}
             new_args = []
             for v in f.args:
-                print("DEBUG, v: ", v[0], "type: ", type(v[0]))
+                # print("DEBUG, v: ", v[0], "type: ", type(v[0]))
                 new_arg_name = v[0] + "_" + str(self.num_uniquified_counter)
                 uniquify_mapping[v[0]] = new_arg_name
                 new_args.append((new_arg_name, v[1], ))
@@ -182,7 +182,7 @@ class Compiler:
             assert(isinstance(f, FunctionDef))
             self.function_compilers[f.name] = CompileFunction(f.name)
             bounded_vars = set([v[0] for v in f.args])
-            print("DEBUG, bounded_vars: ", bounded_vars)
+            # print("DEBUG, bounded_vars: ", bounded_vars)
             (f.body, af) = self.function_compilers[f.name].convert_assignments(
                 f.body, bounded_vars)
 
@@ -339,7 +339,7 @@ class Compiler:
                                     i += 1
                                 # create new function
                                 self.newFunctionDefs.append(FunctionDef(name, args=newFunArgs, body=newFunBody, decorator_list=[], returns=translateType(returnType)))
-                                print("LAMBDA,\t" + name + "\t" + str(translateType(returnType)))
+                                # print("LAMBDA,\t" + name + "\t" + str(translateType(returnType)))
                                 self.outer_instance.functions.append(name)
                             case _:
                                 raise Exception('error in visit_Lambda of closure conversion, unsupported lambda type ' + node.has_type)
@@ -382,7 +382,6 @@ class Compiler:
         for f in p.body:
             assert isinstance(f, FunctionDef)
             # process body
-            print("NEW CONVERTER")
             closure_converter = ConvertToClosure(self)
             new_body = []
             for s in f.body:
@@ -404,9 +403,10 @@ class Compiler:
                     for arg in args:
                         new_args.append((arg[0], translateType(arg[1])))
                     new_module.append(FunctionDef(name, new_args, body, dec_list, translateType(returnType)))
-                    print("outter,\t" + name + "\t" + str(translateType(returnType)) + "\n\tBefore:\t" + str(returnType))
+                    # print("outter,\t" + name + "\t" + str(translateType(returnType)) + "\n\tBefore:\t" + str(returnType))
                 case _:
-                    print("ERROR in closure conversion")
+                    # print("ERROR in closure conversion")
+                    pass
             # new_module.append(f)
             
         # new_new_module = [] # module with fixed return types
@@ -482,18 +482,18 @@ class Compiler:
                         # print("DEBUG, dump arg[i]: ", ast.dump(args.args[i]))
                         alias_mapping[args[i][0]] = Subscript(
                             Name('tup_arg'), Constant(i - 5), Load())
-                    print("DEBUG, alias_mapping: ", alias_mapping)
+                    # print("DEBUG, alias_mapping: ", alias_mapping)
                     new_args.append(arg_tup)
-                    print("DEBUG, new_args: ", new_args)
+                    # print("DEBUG, new_args: ", new_args)
                     f.args = new_args
                     new_body = []
                     for s in f.body:
                         # new_line is new node
                         new_line = LimitFunction(
                             self, alias_mapping).visit_Name(s)
-                        print("DEBUG, new_line: ", new_line)
+                        # print("DEBUG, new_line: ", new_line)
                         new_body.append(new_line)
-                    print("DEBUG, new_body: ", new_body)
+                    # print("DEBUG, new_body: ", new_body)
                     f.body = new_body
                 case _:
                     assert(isinstance(f, FunctionDef))
@@ -542,8 +542,9 @@ class Compiler:
                         new_start_block.append(
                             Instr('movq', [Reg(arg_passing[i]), Variable(var)]))
                         i += 1
-                    case Default:
-                        print("DEBUG in selecting ARG: " + str(type(arg[0])))
+                    case _:
+                        # print("DEBUG in selecting ARG: " + str(type(arg[0])))
+                        pass
             # fix the block
             new_start_block += f.body[f.name + "start"]
             f.body[f.name + "start"] = new_start_block
@@ -747,15 +748,15 @@ class CompileFunction:
 
         af_vars = free_vars_in_lambda.intersection(assigned_vars)
 
-        print("TRACE, free_vars_in_lambda: ", free_vars_in_lambda)
-        print("TRACE, assigned_vars: ", assigned_vars)
-        print("TRACE, af_vars: ", af_vars)
+        # print("TRACE, free_vars_in_lambda: ", free_vars_in_lambda)
+        # print("TRACE, assigned_vars: ", assigned_vars)
+        # print("TRACE, af_vars: ", af_vars)
 
         converter = AssignmentConvert(af_vars)
         new_p = []
         for s in p:
             new_s = converter.visit(s)
-            print("TRACE, converted s: ", new_s)
+            # print("TRACE, converted s: ", new_s)
             new_p.append(new_s)
 
         return (new_p, af_vars)
@@ -773,7 +774,7 @@ class CompileFunction:
 
         for i in range(len(content)):
             if not CompileFunction.is_atm(content[i]):
-                print("DEBUG: ???")
+                # print("DEBUG: ???")
                 temp_name = 'temp_tup' + \
                     str(self.tup_temp_count) + 'X' + str(i)
                 body.append(Assign([Name(temp_name)], content[i]))
@@ -903,7 +904,7 @@ class CompileFunction:
                 temps = var_temps + idx_temps
             case Call(funRef, args):
                 (funRef_rcoed, funRef_temps) = self.rco_exp(funRef, True)
-                print("DEBUG, in rco_exp, call match case: ", funRef_rcoed)
+                # print("DEBUG, in rco_exp, call match case: ", funRef_rcoed)
                 args_rcoed = []
                 args_temps = []
                 for arg in args:  # make sure all args are atomic
@@ -944,7 +945,7 @@ class CompileFunction:
             case Assign([Name(var)], exp):
                 # Record all tuples here
                 if isinstance(exp, Tuple):
-                    print("DEBUG: hit tuple, ", var, type(var))
+                    # print("DEBUG: hit tuple, ", var, type(var))
                     self.tuple_vars.append(var)
                 (exp_rcoed, temps) = self.rco_exp(exp, False)
                 tail = Assign([Name(var)], exp_rcoed)
@@ -1028,7 +1029,7 @@ class CompileFunction:
             case Let(var, rhs, body):
                 ...
             case _:
-                print("DEBUG: hit explicate_effect wild")
+                # print("DEBUG: hit explicate_effect wild")
                 return cont
 
     def explicate_assign(self, rhs: expr, lhs: Name, cont: List[stmt]) -> List[stmt]:
@@ -1049,7 +1050,7 @@ class CompileFunction:
                 return body_ss
                 # return body_ss + [Assign([lhs], result)] + force(cont)
             case _:
-                print("DEBUG: hit explicate_assign wild ", rhs)
+                # print("DEBUG: hit explicate_assign wild ", rhs)
                 return [Assign([lhs], rhs)] + force(cont)
 
     def explicate_pred(self, cnd: expr, thn: List[stmt], els: List[stmt]):
@@ -1096,7 +1097,7 @@ class CompileFunction:
                 self.temp_count += 1
                 return [Assign([var], cnd)] + self.explicate_pred(var, thn, els)
             case _:
-                print("DEBUG: hit explicate_pred wild")
+                # print("DEBUG: hit explicate_pred wild")
                 return [If(Compare(cnd, [Eq()], [Constant(False)]),
                            [self.create_block(els)],
                            [self.create_block(thn)])]
@@ -1141,12 +1142,13 @@ class CompileFunction:
                 self.create_block_no_lazy(cnd_exped, loopBlock.label)
                 return [loopBlock]
             case Collect(_):
-                print("DEBUG: HIT Collect")
+                # print("DEBUG: HIT Collect")
                 return [s] + force(cont)
             case Return(exp):
                 return self.explicate_tail(exp)
             case _:
-                print("DEBUG: hit explicate_stmt wild" + repr(s))
+                # print("DEBUG: hit explicate_stmt wild" + repr(s))
+                pass
 
         return cont
 
@@ -1400,7 +1402,7 @@ class CompileFunction:
                 instrs.append(Callq('collect', 2))
                 # how many args? 2?
             case TailCall(Name(func), args):
-                print("TAIL CALL")
+                # print("TAIL CALL")
                 i = 0
                 new_args = [self.select_arg(arg) for arg in args]
                 for arg in new_args:
@@ -1506,7 +1508,7 @@ class CompileFunction:
                         CompileFunction.arg_passing[:num_args] + [address]), extract_locations(CompileFunction.caller_saved))
                 # TODO check this, should be same as move'
                 case Instr("leaq", [src, dest]):
-                    print("DEBUG: hit leaq")
+                    # print("DEBUG: hit leaq")
                     (read_set, write_set) = (extract_locations(
                         [src]), extract_locations([dest]))
                 case _:
@@ -1551,7 +1553,7 @@ class CompileFunction:
         mapping = analyze_dataflow(
             self.control_flow_graph, transfer, set(), join)
 
-        print(mapping)
+        # print(mapping)
         self.live_before_block = mapping
 
         return self.live_after_set_dict
@@ -1707,7 +1709,7 @@ class CompileFunction:
             (color, step) = shadow_or_stack(v)
 
             # if not going into biased move
-            print("DEBUG in color_graph: v, ", v)
+            # print("DEBUG in color_graph: v, ", v)
             while not colored:
                 if color not in v_saturation:
                     assign_dict[v] = color
@@ -1731,7 +1733,7 @@ class CompileFunction:
         if a in home.keys():
             return home[a]
         else:
-            print("WARNING: home not found for a in assign_homes_arg", a.__repr__())
+            # print("WARNING: home not found for a in assign_homes_arg", a.__repr__())
             return a
 
     def assign_homes_instr(self, i: instr,
@@ -1744,14 +1746,14 @@ class CompileFunction:
                 return Instr(oprtr, new_args)
             case IndirectCallq(func, num_args):
                 new_func = self.assign_homes_arg(func, home)
-                print("DEBUG, IndirectCallq case in assign_homes_instr, new_func: ")
+                # print("DEBUG, IndirectCallq case in assign_homes_instr, new_func: ")
                 return IndirectCallq(new_func, num_args)
             case TailJump(func, num_args):
                 new_func = self.assign_homes_arg(func, home)
                 return TailJump(new_func, num_args)
             case other:
-                print("WARNING, hit wild case in assign_homes_instr: ",
-                      other.__repr__())
+                # print("WARNING, hit wild case in assign_homes_instr: ",
+                    #   other.__repr__())
                 return other
 
     def assign_homes_instrs(self, basic_blocks: Dict[str, List[instr]],
@@ -1820,7 +1822,7 @@ class CompileFunction:
                 self.used_callee.add(r)
 
         home = self.map_colors(coloring)
-        print("DEBUG: home: ", home)
+        # print("DEBUG: home: ", home)
 
         return self.assign_homes_instrs(p.body, home)
 
