@@ -32,11 +32,19 @@ This will produce a file named runtime.o. The -g flag is to tell the compiler to
 Please use `run-tests.py` to check our test cases for lambda.
 use `python run-tests.py <chapter>`
 Where chapter is one of the chapters we've covered in the course:
-var, conditional, loop, tuple, function, lambda
+var, conditional, loop, tuple, function, lambda, bug
+
+Use keyword all to run them all except for bug
 
 To test our lambda functionality run `python run-tests.py lambda`
+To test all functionality run `python run-testes.py all`
 
- Note: Certain passes cannot be checked and it will show that they are not successful (starting at select instructions), but just pay attention to the overall output of the program. Also, a detailed output (tracing) can be toggled on or off by commenting line enable_tracing(). 
+To compile and run all tests at the same time `gcc -c -g -std=c99 runtime.c & python run-tests.py all`
+
+
+Note: Certain passes cannot be checked (select instructions and onward), but just pay attention to the overall output of the program. Also, a detailed output (tracing) can be toggled on or off by commenting line enable_tracing(). 
+
+Note2: There are two test cases in the tests/bug directory that fail during run-tests.py. We are not certain as to why this is, but when we compile these test cases outside of run-tests.py there is no issue. 
 
 ## Final Project
 
