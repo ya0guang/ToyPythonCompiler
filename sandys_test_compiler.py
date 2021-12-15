@@ -518,7 +518,7 @@ def run1(prog):
 
 
     print("\n\n======= Closure Conversion")
-    p_closure_converted = compiler.convert_to_closure(p_assign_converted)
+    p_closure_converted = compiler.convert_to_closures(p_assign_converted)
     print("\n======= printing closured prog")
     print(p_closure_converted)
     # for f in p_closure_converted.body:
