@@ -77,6 +77,7 @@ class Compiler:
         # function -> {original_name: new_name}
         self.function_limit_renames = {}
         self.num_uniquified_counter = 0
+        
 
     def shrink(self, p: Module) -> Module:
         """create main function, making the module body a series of function definitions"""

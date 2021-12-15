@@ -18,10 +18,23 @@ from interp_x86 import eval_x86
 # print( g(11) + h(15) )
 # """
 
+prog = """
+def foo(x: int, y: int, z: int) -> Callable[[int],int]:
+    x = 100
+    y = 200
+    bar: Callable[[int],int] = lambda x: x + y + z
+    z = 10
+    return bar
+
+z = 30
+print(foo(1, 2, z)(1))
+"""
+
 # prog = """
 # x = 1
 # y = (x,)
 # """
+
 
 prog = """
 def foo(x: int, y: int, z: int) -> Callable[[int],int]:
@@ -229,6 +242,7 @@ p = parse(prog)
 
 print("\n======= original program")
 print(p)
+
 
 print("\n======= AST of the original program")
 print(ast.dump(p))
