@@ -10,7 +10,7 @@ import type_check_Clambda
 from utils import run_tests, run_one_test, enable_tracing
 
 compiler = compiler.Compiler()
-#enable_tracing() #comment this to see less information in the output
+enable_tracing() #comment this to see less information in the output
 arg = sys.argv[1]
 if arg == 'all':
     run_tests('var', compiler, 'var', type_check_Llambda.TypeCheckLlambda().type_check, interp_Llambda.InterpLlambda().interp,type_check_Clambda.TypeCheckClambda().type_check, interp_Clambda.InterpClambda().interp)
