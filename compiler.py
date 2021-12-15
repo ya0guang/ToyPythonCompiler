@@ -914,6 +914,13 @@ class CompileFunction:
                 temps = args_temps + funRef_temps
             case FunRef(f):
                 tail = e
+            case Let(name, tup, subscript):
+                (tup_rcoed, tup_temps) = self.rco_exp(tup, False)
+                tail = Let(name, tup_rcoed, subscript)
+                temps = tup_temps
+                # (subscript_rcoed, subscript_temps) = self.rco_exp(subscript, False)
+                # tail = Let(name, tup_rcoed, subscript_rcoed)
+                # temps = tup_temps + subscript_temps
             case _:
                 raise Exception(
                     'error in rco_exp, unsupported expression ' + repr(e))
@@ -1036,7 +1043,10 @@ class CompileFunction:
                 orelse_ss = self.explicate_assign(orelse, lhs, [trampoline])
                 return self.explicate_pred(test, body_ss, orelse_ss)
             case Let(var, let_rhs, let_body):
-                return [Assign([var], let_rhs)] + self.explicate_assign(let_body, lhs, []) + force(cont)
+                start = self.explicate_assign(let_rhs, var, [])
+                end = self.explicate_assign(let_body, lhs, [])
+                return force(start) + end + force(cont)
+                # return [Assign([var], let_rhs)] + self.explicate_assign(let_body, lhs, []) + force(cont)
             case Begin(body, result):
                 new_cont = [Assign([lhs], result)] + force(cont)
                 body_ss = self.explicate_stmts(body, new_cont)
